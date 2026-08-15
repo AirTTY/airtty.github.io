@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AirTTY 網頁藍牙終端</title>
+<link rel="stylesheet" href="xterm.css">
+<style>
+/* 自包含深色版面：本頁託管於靜態 HTTPS，不依賴裝置端的任何樣式 */
+:root {
+	--bg: #16161a; --panel: #232329; --border: #3a3a42;
+	--fg: #e2e2e6; --dim: #9a9aa4;
+	--ok: #34c759; --warn: #ff9f0a; --err: #ff453a; --accent: #4da3ff;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+	background: var(--bg); color: var(--fg);
+	font: 14px/1.5 -apple-system, "Segoe UI", "Noto Sans TC", sans-serif;
+	display: flex; flex-direction: column;
+}
+header {
+	display: flex; align-items: center; gap: .75em; flex-wrap: wrap;
+	padding: .6em 1em; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+header h1 { font-size: 1.05em; margin: 0; font-weight: 600; }
+button {
+	font: inherit; color: var(--fg); background: #2e2e36;
+	border: 1px solid var(--border); border-radius: 6px;
+	padding: .35em .9em; cursor: pointer;
+}
+button:hover { background: #383842; }
+button:disabled { opacity: .45; cursor: default; }
+button.primary { background: #1c4e8a; border-color: #2a6cb8; }
+button.primary:hover { background: #235f9f; }
+#status { font-size: .92em; color: var(--dim); }
+#status.ok { color: var(--ok); }
+#status.err { color: var(--err); }
+#hints {
+	padding: .5em 1em; font-size: .88em; color: var(--dim);
+	background: var(--panel); border-bottom: 1px solid var(--border);
+}
+#hints code { color: var(--fg); background: #2e2e36; padding: 0 .35em; border-radius: 4px; }
+#term { flex: 1; min-height: 0; padding: .4em; background: #000; }
+#term .terminal { height: 100%; }
+a { color: var(--accent); }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+<header>
+	<h1>AirTTY 網頁藍牙終端</h1>
+	<button id="btnConnect" class="primary">🔗 選擇裝置並連線</button>
+	<button id="btnReconnect" class="hidden">↻ 重新連線</button>
+	<button id="btnDisconnect" class="hidden">✕ 斷線</button>
+	<span id="status">未連線</span>
+</header>
+<div id="hints">
+	掃描清單裡本裝置顯示為<strong>無名裝置</strong>（「Unknown or Unsupported Device」）是正常的
+	—— BLE 廣播放不下名稱；靠近一點依訊號強度判斷，連上後名稱才會出現
+	（裝置端顯示的內部代號為 <code>Airconsole-…</code>，與 AirTTY 是同一台機器）。
+	連上後輸入裝置的<strong>連線密碼</strong>即進 console
+	—— 出廠密碼請見隨機附的憑證卡；若已自行更改請用新密碼。
+	⚠️ 一次只能一個 BLE 連線；若連不上，先確認沒有其他手機／電腦連著。
+	<br>本頁需要 Chrome 或 Edge（Safari 不支援網頁藍牙，iPhone／iPad 請改用手冊介紹的 App）。
+	使用說明與離線自架方法見
+	<a href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/README.md">本頁說明文件</a>。
+</div>
+<div id="term"></div>
+<script src="xterm.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

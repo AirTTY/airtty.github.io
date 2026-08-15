@@ -1,0 +1,214 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+
+#include "ar9331.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "Gigastone A4-52ER";
+	compatible = "gigastone,a4-52er", "qca,ar9331";
+
+	aliases {
+		serial0 = &uart;
+		led-boot = &system;
+		led-failsafe = &system;
+		led-running = &system;
+		led-upgrade = &system;
+		label-mac-device = &eth0;
+	};
+
+	/*
+	 * E2-quiet experiment (2026-07-11) CONCLUDED: console=null image still
+	 * died in the cold-boot retry loop -> kernel console activity is NOT the
+	 * power-latch trigger (death happens <1s into U-Boot, long before the
+	 * kernel). Serial console restored for USB-TTL debugging.
+	 */
+
+	/*
+	 * GPIO0/23 polarity boot-verified 2026-07-11 (blue2 blinks as led-boot,
+	 * steady when running). GPIO17/27 are the RJ45 jack LEDs.
+	 * 2026-07-23 live-verified on hardware: both jack LEDs are ACTIVE_HIGH
+	 * (brightness=1 under the old active-low modelling turned them OFF) —
+	 * the earlier "pepe2k LED_ACT_L" assumption was wrong. Modern
+	 * color/function naming (sysfs green:lan / orange:lan) so the
+	 * 04_led_migration prefix-strip (remove_devicename_leds) matches the
+	 * 01_leds trigger config. Triggers bind to eth1 (physical jack; its
+	 * carrier follows the cable — eth0 is the always-up CPU/switch link,
+	 * and br-lan inherits that, which is why br-lan binding never went off).
+	 */
+	leds {
+		compatible = "gpio-leds";
+
+		blue1 {
+			label = "gigastone:blue:top1";
+			gpios = <&gpio 0 GPIO_ACTIVE_HIGH>;
+		};
+
+		system: blue2 {
+			label = "gigastone:blue:top2";
+			gpios = <&gpio 23 GPIO_ACTIVE_HIGH>;
+		};
+
+		led_lan_orange: led-lan-orange {
+			color = <LED_COLOR_ID_ORANGE>;
+			function = LED_FUNCTION_LAN;
+			gpios = <&gpio 27 GPIO_ACTIVE_HIGH>;
+		};
+
+		led-lan-green {
+			color = <LED_COLOR_ID_GREEN>;
+			function = LED_FUNCTION_LAN;
+			gpios = <&gpio 17 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		button0 {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio 12 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+
+	/*
+	 * GPIO18 = power-MCU line, polarity live-verified 2026-07-11 via sysfs:
+	 * LOW = keep-alive (mandatory; the MCU cuts power ~1s after cold
+	 * power-on otherwise), HIGH = immediate power-off. U-Boot asserts it LOW
+	 * at init (pepe2k OUT_INIT_L patch); this node makes the kernel claim it
+	 * output-low too and gives userspace a working `poweroff`.
+	 */
+	gpio-poweroff {
+		compatible = "gpio-poweroff";
+		gpios = <&gpio 18 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&ref {
+	clock-frequency = <25000000>;
+};
+
+&uart {
+	status = "okay";
+};
+
+&gpio {
+	status = "okay";
+};
+
+&usb {
+	dr_mode = "host";
+	status = "okay";
+};
+
+&usb_phy {
+	status = "okay";
+};
+
+&spi {
+	num-chipselects = <1>;
+	status = "okay";
+
+	/*
+	 * Spansion S25FL032PIF-class SPI NOR, 8 MiB total.
+	 * 2026-07-11: 104MHz (MadnessASAP guess, never boot-proven) is far above
+	 * every shipping AR9331 board (AR150/carambola2 50MHz, USB150 33MHz) and
+	 * is the prime suspect for the Linux-side flash probe failing (no mtd →
+	 * eth0 nvmem MAC cell defers forever → no network). 25MHz = safest value.
+	 */
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		spi-max-frequency = <25000000>;
+		reg = <0>;
+
+		/*
+		 * pepe2k U-Boot standard OpenWrt layout (3 partitions):
+		 *   u-boot    0x000000  0x020000  (128K: code 123K + env @0x1ec00 + MAC @0x1fc00)
+		 *   firmware  0x020000  0x7d0000  (8000K, kernel+rootfs merged)
+		 *   art       0x7f0000  0x010000  (64K, WiFi calibration + MAC, read-only)
+		 */
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/*
+			 * 2026-07-12: read-only TEMPORARILY dropped so a running
+			 * system can rewrite mtd0 (escape hatch while iterating on
+			 * the pepe2k power-latch fix, in case the recovery button
+			 * path ever breaks). Re-add once the cold-boot fix lands.
+			 */
+			uboot: partition@0 {
+				label = "u-boot";
+				reg = <0x000000 0x020000>;
+			};
+
+			partition@20000 {
+				compatible = "denx,uimage";
+				label = "firmware";
+				reg = <0x020000 0x7d0000>;
+			};
+
+			art: partition@7f0000 {
+				label = "art";
+				reg = <0x7f0000 0x010000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					/* factory label MAC really lives here on this board */
+					macaddr_art_1002: macaddr@1002 {
+						reg = <0x1002 0x6>;
+					};
+
+					cal_art_1000: calibration@1000 {
+						reg = <0x1000 0x440>;
+					};
+				};
+			};
+		};
+	};
+};
+
+/*
+ * Ethernet blocks copied verbatim from ar9330_glinet_gl-ar150.dts (25.12.5),
+ * which was live-verified to bring the A4-52ER wired port up (eth0, DHCP seen
+ * on the wire, 2026-07-11). Only the nvmem MAC source differs (art@0x1002).
+ * The previous MadnessASAP-era idiom (gmac-config under eth0 + eth1 syscon
+ * override) never produced any link/traffic on this board.
+ */
+&eth0 {
+	status = "okay";
+
+	nvmem-cells = <&macaddr_art_1002>;
+	nvmem-cell-names = "mac-address";
+};
+
+&eth1 {
+	status = "okay";
+
+	nvmem-cells = <&macaddr_art_1002>;
+	nvmem-cell-names = "mac-address";
+
+	gmac-config {
+		device = <&gmac>;
+
+		switch-phy-addr-swap = <0>;
+		switch-phy-swap = <0>;
+	};
+};
+
+&wmac {
+	status = "okay";
+
+	nvmem-cells = <&macaddr_art_1002>, <&cal_art_1000>;
+	nvmem-cell-names = "mac-address", "calibration";
+};

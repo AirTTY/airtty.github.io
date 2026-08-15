@@ -1,0 +1,209 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/dts-v1/;
+
+#include "ar9331.dtsi"
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "Gigastone A4-52ER (stock U-Boot layout)";
+	compatible = "gigastone,a4-52er-stock", "qca,ar9331";
+
+	aliases {
+		serial0 = &uart;
+		led-boot = &system;
+		led-failsafe = &system;
+		led-running = &system;
+		led-upgrade = &system;
+		label-mac-device = &eth0;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		lan-org {
+			label = "gigastone:orange:wan";
+			gpios = <&gpio 27 GPIO_ACTIVE_HIGH>;
+		};
+
+		lan-grn {
+			label = "gigastone:green:wan";
+			gpios = <&gpio 17 GPIO_ACTIVE_HIGH>;
+		};
+
+		blue1 {
+			label = "gigastone:blue:top1";
+			gpios = <&gpio 0 GPIO_ACTIVE_HIGH>;
+		};
+
+		system: blue2 {
+			label = "gigastone:blue:top2";
+			gpios = <&gpio 23 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		button0 {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&gpio 12 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+
+	/*
+	 * GPIO18 is the board-level soft-poweroff line. Driving it HIGH powers
+	 * the device off immediately. Do NOT create a gpio-poweroff node here and
+	 * do NOT drive GPIO18 at boot, or the board powers down as soon as it
+	 * comes up. It is left intentionally unconfigured (the kernel never
+	 * touches it). Soft-poweroff can still be issued later from userspace via
+	 * the GPIO sysfs/character device if wanted.
+	 */
+
+	gpio-batlevel {
+		compatible = "gpio-decoder";
+		gpios = <&gpio 21 GPIO_ACTIVE_HIGH>,
+			<&gpio 20 GPIO_ACTIVE_HIGH>,
+			<&gpio 19 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&ref {
+	clock-frequency = <25000000>;
+};
+
+&uart {
+	status = "okay";
+};
+
+&gpio {
+	status = "okay";
+};
+
+&usb {
+	dr_mode = "host";
+	status = "okay";
+};
+
+&usb_phy {
+	status = "okay";
+};
+
+&spi {
+	num-chipselects = <1>;
+	status = "okay";
+
+	/* Spansion S25FL032PIF-class SPI NOR, 8 MiB total */
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		spi-max-frequency = <104000000>;
+		reg = <0>;
+
+		/*
+		 * Stock Gigastone U-Boot layout (6 partitions). Unlike the
+		 * pepe2k-uboot variant (ar9331_gigastone_a4-52er.dts), this
+		 * keeps mtd0 (u-boot) exactly as shipped from the factory and
+		 * never writes to it or to u-boot-env/CONF/NVRAM/art. Only
+		 * "firmware" is ever touched by sysupgrade.
+		 *
+		 *   u-boot      0x000000  0x040000  (256K, read-only, factory U-Boot 1.1.4, holds MAC @0x1fc00)
+		 *   u-boot-env  0x040000  0x010000  (64K, read-only, factory env, untouched)
+		 *   CONF        0x050000  0x010000  (64K, read-only, factory config, untouched)
+		 *   NVRAM       0x060000  0x010000  (64K, read-only, factory nvram, untouched)
+		 *   firmware    0x070000  0x780000  (7680K, kernel+rootfs merged, denx,uimage so
+		 *                                    stock U-Boot's standard bootm can load it)
+		 *   art         0x7f0000  0x010000  (64K, WiFi calibration + MAC, read-only)
+		 */
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			uboot: partition@0 {
+				label = "u-boot";
+				reg = <0x000000 0x040000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					macaddr_uboot_1fc00: macaddr@1fc00 {
+						reg = <0x1fc00 0x6>;
+					};
+				};
+			};
+
+			partition@40000 {
+				label = "u-boot-env";
+				reg = <0x040000 0x010000>;
+				read-only;
+			};
+
+			partition@50000 {
+				label = "CONF";
+				reg = <0x050000 0x010000>;
+				read-only;
+			};
+
+			partition@60000 {
+				label = "NVRAM";
+				reg = <0x060000 0x010000>;
+				read-only;
+			};
+
+			partition@70000 {
+				compatible = "denx,uimage";
+				label = "firmware";
+				reg = <0x070000 0x780000>;
+			};
+
+			art: partition@7f0000 {
+				label = "art";
+				reg = <0x7f0000 0x010000>;
+				read-only;
+
+				nvmem-layout {
+					compatible = "fixed-layout";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					cal_art_1000: calibration@1000 {
+						reg = <0x1000 0x440>;
+					};
+				};
+			};
+		};
+	};
+};
+
+&eth0 {
+	status = "okay";
+
+	nvmem-cells = <&macaddr_uboot_1fc00>;
+	nvmem-cell-names = "mac-address";
+
+	gmac-config {
+		device = <&gmac>;
+
+		switch-phy-addr-swap = <0>;
+		switch-phy-swap = <0>;
+	};
+};
+
+&eth1 {
+	status = "okay";
+
+	compatible = "syscon", "simple-mfd";
+};
+
+&wmac {
+	status = "okay";
+
+	nvmem-cells = <&macaddr_uboot_1fc00>, <&cal_art_1000>;
+	nvmem-cell-names = "mac-address", "calibration";
+};

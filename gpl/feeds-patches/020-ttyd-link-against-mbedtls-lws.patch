@@ -1,0 +1,13 @@
+diff --git a/utils/ttyd/Makefile b/utils/ttyd/Makefile
+index c6733c4..82059ab 100644
+--- a/utils/ttyd/Makefile
++++ b/utils/ttyd/Makefile
+@@ -27,7 +27,7 @@ define Package/ttyd
+ 	SECTION:=utils
+ 	CATEGORY:=Utilities
+ 	TITLE:=Command-line tool for sharing terminal over the web
+-	DEPENDS:=+libcap +libopenssl +libjson-c +libuv +zlib +libwebsockets-full
++	DEPENDS:=+libcap +libjson-c +libuv +zlib +libwebsockets
+ 	URL:=https://github.com/tsl0922/ttyd
+ 	SUBMENU:=Terminal
+ endef

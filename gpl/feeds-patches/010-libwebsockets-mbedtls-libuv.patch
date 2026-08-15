@@ -1,0 +1,33 @@
+diff --git a/libs/libwebsockets/Makefile b/libs/libwebsockets/Makefile
+index b8d5d31..23ca784 100644
+--- a/libs/libwebsockets/Makefile
++++ b/libs/libwebsockets/Makefile
+@@ -61,7 +61,7 @@ endef
+ define Package/libwebsockets-mbedtls
+ 	$(call Package/$(PKG_NAME)/Default)
+ 	TITLE += (mbedTLS)
+-	DEPENDS += +libmbedtls
++	DEPENDS += +libmbedtls +libuv
+ 	VARIANT:=mbedtls
+ 	PROVIDES:=libwebsockets
+ 	CONFLICTS:=libwebsockets-openssl
+@@ -82,6 +82,7 @@ endif
+ 
+ ifeq ($(BUILD_VARIANT),mbedtls)
+     CMAKE_OPTIONS += -DLWS_WITH_MBEDTLS=1
++    CMAKE_OPTIONS += -DLWS_WITH_LIBUV=ON
+ endif
+ 
+ ifeq ($(BUILD_VARIANT),full)
+@@ -100,7 +101,10 @@ define Package/libwebsockets/install
+ 	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libwebsockets*.so* $(1)/usr/lib/
+ endef
+ 
+-Package/libwebsockets-mbedtls/install = $(Package/libwebsockets/install)
++define Package/libwebsockets-mbedtls/install
++	$(call Package/libwebsockets/install,$(1))
++	$(CP) $(PKG_INSTALL_DIR)/usr/lib/libwebsockets-evlib_uv.so* $(1)/usr/lib
++endef
+ Package/libwebsockets-openssl/install = $(Package/libwebsockets/install)
+ 
+ define Package/libwebsockets-full/install

@@ -1,0 +1,7 @@
+title: AirTTY
+description: 可攜式無線 console 伺服器 —— 透過 WiFi 或藍牙連進設備 console
+theme: jekyll-theme-cayman
+
+# webterm/ 是純靜態頁（無 front matter），Jekyll 會原樣輸出，不套用本主題。
+# ⚠️ 不要加 .nojekyll：首頁與各目錄索引仰賴 jekyll-readme-index，
+#    .md 之間的相對連結仰賴 jekyll-relative-links，兩者都是 Pages 預設外掛。
