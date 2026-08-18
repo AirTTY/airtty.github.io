@@ -28,11 +28,13 @@ button {
 	font: inherit; color: var(--fg); background: #2e2e36;
 	border: 1px solid var(--border); border-radius: 6px;
 	padding: .35em .9em; cursor: pointer;
+	touch-action: manipulation;   /* 手機連點不觸發縮放、也省掉 300ms 延遲 */
 }
 button:hover { background: #383842; }
 button:disabled { opacity: .45; cursor: default; }
 button.primary { background: #1c4e8a; border-color: #2a6cb8; }
 button.primary:hover { background: #235f9f; }
+button.active { background: #1c4e8a; border-color: #2a6cb8; }
 #status { font-size: .92em; color: var(--dim); }
 #status.ok { color: var(--ok); }
 #status.err { color: var(--err); }
@@ -41,8 +43,43 @@ button.primary:hover { background: #235f9f; }
 	background: var(--panel); border-bottom: 1px solid var(--border);
 }
 #hints code { color: var(--fg); background: #2e2e36; padding: 0 .35em; border-radius: 4px; }
-#term { flex: 1; min-height: 0; padding: .4em; background: #000; }
-#term .terminal { height: 100%; }
+
+/* ── 快捷鍵／工具列 ──
+ * 手機沒有 Tab／Esc／Ctrl／方向鍵，這排按鈕是行動裝置操作 console 的主力。
+ * 觸控目標一律 ≥40px（Android／iOS 人機介面指引的最小可靠點擊尺寸）。*/
+#toolbar {
+	display: flex; flex-direction: column; gap: .4em;
+	padding: .5em .8em; background: var(--panel);
+	border-bottom: 1px solid var(--border);
+}
+#toolbar.collapsed { display: none; }
+.krow { display: flex; flex-wrap: wrap; gap: .35em; align-items: center; }
+#toolbar button {
+	min-height: 40px; min-width: 44px; padding: .3em .7em;
+	-webkit-user-select: none; user-select: none;
+}
+#toolbar button.key {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	font-size: .95em;
+}
+/* Ctrl 等待下一鍵時的視覺回饋：橘色＋外框，手機上一眼可辨 */
+#btnCtrl.armed {
+	background: #8a5a1c; border-color: var(--warn); color: #fff;
+	box-shadow: 0 0 0 2px rgba(255, 159, 10, .35);
+}
+#kbHint { font-size: .85em; color: var(--warn); margin-left: .3em; }
+.grp {
+	display: flex; align-items: center; gap: .2em;
+	border: 1px solid var(--border); border-radius: 6px; padding: 0 .25em;
+}
+.grp button { border: none; background: transparent; min-width: 40px; }
+.grp button:hover { background: #383842; }
+#fontSize { min-width: 2.2em; text-align: center; color: var(--dim); font-size: .9em; }
+.sep { flex: 1 1 0; }
+
+/* 終端：字級大時 80 欄可能比手機螢幕寬 → 允許水平捲動，不裁切內容 */
+#term { flex: 1; min-height: 0; padding: .4em; background: #000; overflow-x: auto; overflow-y: hidden; }
+#term .xterm { height: 100%; }
 a { color: var(--accent); }
 .hidden { display: none !important; }
 </style>
@@ -54,19 +91,56 @@ a { color: var(--accent); }
 	<button id="btnReconnect" class="hidden">↻ 重新連線</button>
 	<button id="btnDisconnect" class="hidden">✕ 斷線</button>
 	<span id="status">未連線</span>
+	<span class="sep"></span>
+	<button id="btnKeys" aria-expanded="false" aria-controls="toolbar"
+		title="顯示／隱藏快捷鍵列">⌨ 快捷鍵</button>
 </header>
 <div id="hints">
 	掃描清單裡本裝置顯示為<strong>無名裝置</strong>（「Unknown or Unsupported Device」）是正常的
 	—— BLE 廣播放不下名稱；靠近一點依訊號強度判斷，連上後名稱才會出現
-	（連上後顯示的裝置名稱為 <code>AirTTY-A1-xxxx</code>，<code>xxxx</code> 是每台不同的識別碼；
-	韌體 v1.0.x 以前出廠的機器仍顯示舊名 <code>Airconsole-A4-xxxx</code>，是同一台機器）。
+	（連上後顯示的裝置名稱為 <code>AirTTY-A1-xxxx</code>，<code>xxxx</code> 是每台不同的識別碼）。
 	連上後輸入裝置的<strong>連線密碼</strong>即進 console
 	—— 出廠預設密碼為 <code>AirTTY</code>（可於管理介面更改；若已更改請用新密碼）。
 	⚠️ 一次只能一個 BLE 連線；若連不上，先確認沒有其他手機／電腦連著。
-	<br>本頁需要 Chrome 或 Edge（Safari 不支援網頁藍牙，iPhone／iPad 請改用手冊介紹的 App）。
+	<br>手機沒有 Tab／Esc／Ctrl／方向鍵 —— 請用上方的 <strong>⌨ 快捷鍵</strong>列。
+	本頁需要 Chrome 或 Edge（Safari 不支援網頁藍牙，iPhone／iPad 請改用手冊介紹的 App）。
 	使用說明與離線自架方法見
 	<a href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/README.md">本頁說明文件</a>。
 </div>
+
+<!-- 快捷鍵列：data-seq 是要送出的位元組（16 進位），由 app.js 統一解析後走既有的寫入佇列 -->
+<div id="toolbar" class="collapsed">
+	<div class="krow" id="keyRow">
+		<button class="key" data-seq="09"     title="Tab —— 指令補全">Tab</button>
+		<button class="key" data-seq="1b"     title="Esc">Esc</button>
+		<button class="key" data-seq="3f"     title="? —— Cisco 式情境說明">?</button>
+		<button class="key" id="btnCtrl" aria-pressed="false"
+			title="Ctrl 修飾鍵 —— 按下後再從鍵盤敲一個字元，該字元會以 Ctrl+它送出">Ctrl</button>
+		<button class="key" data-seq="03"     title="Ctrl+C —— 中斷目前指令">Ctrl+C</button>
+		<button class="key" data-seq="1a"     title="Ctrl+Z —— 回到特權模式／暫停">Ctrl+Z</button>
+		<button class="key" data-seq="1e"     title="Ctrl+Shift+6（Ctrl+^）—— Cisco 中斷 ping／traceroute／telnet">Ctrl+^</button>
+		<button class="key" data-seq="1b5b41" aria-label="上" title="↑ —— 上一筆歷史指令">↑</button>
+		<button class="key" data-seq="1b5b42" aria-label="下" title="↓ —— 下一筆歷史指令">↓</button>
+		<button class="key" data-seq="1b5b44" aria-label="左" title="← 游標左移">←</button>
+		<button class="key" data-seq="1b5b43" aria-label="右" title="→ 游標右移">→</button>
+		<!-- Break 是線路狀態訊號不是字元，BLE 資料流送不出去；目前韌體的 BLE 通道
+		     也沒有頻外指令機制 → 停用並說明原因，不做成按了沒反應的假按鈕 -->
+		<button class="key" id="btnBreak" disabled
+			title="送出序列 Break 訊號（中斷 Sun／HP 主機、進 ROM monitor）。&#10;目前韌體的藍牙通道尚無此功能，需要韌體 v1.2 以上；&#10;現在請改用網頁終端（管理介面）或 RFC2217 連 4001 埠。">Break</button>
+		<span id="kbHint"></span>
+	</div>
+	<div class="krow">
+		<button id="btnPaste" title="從剪貼簿貼上並送出（多行會先確認）">📋 貼上</button>
+		<span class="grp">
+			<button id="btnFontDown" aria-label="縮小字體" title="縮小字體">A−</button>
+			<span id="fontSize">14</span>
+			<button id="btnFontUp" aria-label="放大字體" title="放大字體">A+</button>
+		</span>
+		<button id="btnLog" disabled
+			title="把本次連線收到的畫面輸出存成純文字檔（在瀏覽器本機產生，不會上傳）">⬇ 下載紀錄</button>
+	</div>
+</div>
+
 <div id="term"></div>
 <script src="xterm.js"></script>
 <script src="app.js"></script>

@@ -11,6 +11,8 @@
  * 想自行驗證，可在本目錄執行：
  *   grep -riE "fetch\(|XMLHttpRequest|WebSocket|sendBeacon|src=\"http" .
  * 唯一的命中應該只有這段註解與 README.md 的同一段說明，程式碼本體零命中。
+ * （「下載紀錄」用的 Blob / URL.createObjectURL 與「貼上」用的 navigator.clipboard
+ *   都只在瀏覽器記憶體內作業，不產生任何網路請求。）
  *
  * 裝置端介面（決定本頁寫法的事實）：
  * - Nordic UART Service：service 6e400001-…、RX 6e400002（瀏覽器→裝置，write）、
@@ -21,6 +23,11 @@
  * - BLE 一次只允許一條連線；連線密碼由裝置端把關。
  * - Windows 首次 GATT 連線常失敗 → 內建重試 ×3。
  * - 重新連線必須沿用同一個 BluetoothDevice 物件，否則多台並存時會連錯機器。
+ * - 裝置端的 BLE 橋接把上行資料當純位元組轉發（0xFF 會被逃逸成 IAC IAC），
+ *   所以「送出序列 Break」這種頻外訊號無法從 BLE 這條路做到 → Break 鈕停用。
+ *
+ * 相依：xterm.js v5.x（本目錄自帶）。用到的公開 API 僅 Terminal / write /
+ * onData / focus / resize / options / element —— 已對照本目錄這份 bundle 確認。
  */
 'use strict';
 
@@ -32,22 +39,48 @@ var NUS_TX  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; /* 裝置 → client */
  * ATT payload,任何協商結果下都安全;打字是單鍵單 byte,只有貼上會走分塊迴圈 */
 var WRITE_CHUNK = 20;
 
+/* 裝置端韌體目前沒有任何可從 BLE 觸發 Break 的頻外機制 → 恆為 false。
+ * 韌體支援後把這裡改 true 並填 BREAK_SEQ 即可,其餘程式不用動。 */
+var BREAK_SUPPORTED = false;
+
+var LS_FONT = 'airtty.webterm.fontSize';
+var LS_KEYS = 'airtty.webterm.keysOpen';
+var FONT_MIN = 8, FONT_MAX = 24, FONT_DEFAULT = 14;
+
+/* 紀錄緩衝上限:機房裡整天掛著也不該吃爆手機記憶體。
+ * 超過就從最舊的那一塊丟起(環形),保留最新的內容。 */
+var LOG_LIMIT = 2 * 1024 * 1024;
+
 var elStatus = document.getElementById('status');
 var btnConnect = document.getElementById('btnConnect');
 var btnReconnect = document.getElementById('btnReconnect');
 var btnDisconnect = document.getElementById('btnDisconnect');
 
+var elToolbar = document.getElementById('toolbar');
+var elKeyRow = document.getElementById('keyRow');
+var elKbHint = document.getElementById('kbHint');
+var elFontSize = document.getElementById('fontSize');
+var elTermHost = document.getElementById('term');
+var btnKeys = document.getElementById('btnKeys');
+var btnCtrl = document.getElementById('btnCtrl');
+var btnBreak = document.getElementById('btnBreak');
+var btnPaste = document.getElementById('btnPaste');
+var btnFontDown = document.getElementById('btnFontDown');
+var btnFontUp = document.getElementById('btnFontUp');
+var btnLog = document.getElementById('btnLog');
+
 var term = new window.Terminal({
-	cursorBlink: true, fontSize: 14, scrollback: 5000,
+	cursorBlink: true, fontSize: FONT_DEFAULT, scrollback: 5000,
 	theme: { background: '#000000' }
 });
-term.open(document.getElementById('term'));
+term.open(elTermHost);
 
 var device = null;      /* 釘住的 BluetoothDevice(重連不重開 chooser) */
 var rxChar = null;      /* write 目標 */
 var txChar = null;      /* notify 來源 */
 var wantDisconnect = false;   /* 區分「使用者按斷線」與「意外斷線」 */
 var writeQueue = Promise.resolve();  /* GATT 同時只能一個操作 → 寫入串行化 */
+var ctrlArmed = false;  /* Ctrl 修飾鍵:等待下一個鍵 */
 
 function setStatus(text, cls) {
 	elStatus.textContent = text;
@@ -60,6 +93,7 @@ function setButtons(state) {
 	btnReconnect.classList.toggle('hidden', state !== 'dropped');
 	btnDisconnect.classList.toggle('hidden', state !== 'connected');
 	btnConnect.disabled = btnReconnect.disabled = (state === 'connecting');
+	setKeysEnabled(state === 'connected');
 }
 
 function say(line) {
@@ -79,6 +113,282 @@ function envCheck() {
 		return false;
 	}
 	return true;
+}
+
+/* ── 送出位元組:鍵盤、快捷鍵、貼上共用的唯一出口 ──
+ * 一律走同一條串行化佇列,避免多個來源同時對 GATT 下寫入(GATT 同時只能一個操作)。*/
+function sendBytes(bytes) {
+	var i;
+
+	if (!rxChar || !bytes || !bytes.length) return;
+	for (i = 0; i < bytes.length; i += WRITE_CHUNK) {
+		(function(chunk) {
+			writeQueue = writeQueue.then(function() {
+				if (!rxChar) return;
+				/* 裝置端走 AcquireWrite(write command)→ 優先無回應寫,較快;
+				 * 特性不支援時退回有回應寫 */
+				return rxChar.properties.writeWithoutResponse
+					? rxChar.writeValueWithoutResponse(chunk)
+					: rxChar.writeValue(chunk);
+			}).catch(function() { /* 斷線競態:丟棄該鍵,斷線事件會接手 UI */ });
+		})(bytes.slice(i, i + WRITE_CHUNK));
+	}
+}
+
+function sendText(text) {
+	sendBytes(new TextEncoder().encode(text));
+}
+
+/* ── 快捷鍵列 ──────────────────────────────────────────────
+ * 手機沒有 Tab/Esc/Ctrl/方向鍵,這排按鈕是行動裝置操作 console 的主力。
+ * 送出的位元組寫在 index.html 的 data-seq(16 進位),便於稽核。*/
+
+function hexToBytes(hex) {
+	var out = new Uint8Array(hex.length / 2), i;
+
+	for (i = 0; i < out.length; i++)
+		out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+	return out;
+}
+
+function setKeysEnabled(live) {
+	var all = elKeyRow.querySelectorAll('button'), i;
+
+	for (i = 0; i < all.length; i++) all[i].disabled = !live;
+	/* Break 另有條件:韌體沒支援就一直停用 */
+	btnBreak.disabled = !(live && BREAK_SUPPORTED);
+	btnPaste.disabled = !live;
+	if (!live) setCtrlArmed(false);
+}
+
+function setCtrlArmed(on) {
+	ctrlArmed = !!on;
+	btnCtrl.classList.toggle('armed', ctrlArmed);
+	btnCtrl.setAttribute('aria-pressed', ctrlArmed ? 'true' : 'false');
+	elKbHint.textContent = ctrlArmed ? 'Ctrl 已按下 —— 請再敲一個鍵' : '';
+}
+
+/* 字元 → 控制碼。ASCII 的控制碼就是把 @A-Z[\]^_ 的高位清掉(& 0x1F),
+ * 另外補上網管常按的幾個:Ctrl+? = DEL、Ctrl+Space/2 = NUL、Ctrl+6 = 0x1E。*/
+function ctrlByte(ch) {
+	var c;
+
+	if (!ch) return null;
+	if (ch === '?') return 0x7f;
+	if (ch === ' ' || ch === '2') return 0x00;
+	if (ch === '6') return 0x1e;
+	if (ch === '3') return 0x1b;
+	if (ch === '4') return 0x1c;
+	if (ch === '5') return 0x1d;
+	if (ch === '7' || ch === '/') return 0x1f;
+	c = ch.toUpperCase().charCodeAt(0);
+	if (c >= 0x40 && c <= 0x5f) return c & 0x1f;
+	return null;
+}
+
+/* 按鈕不能搶走終端的焦點:
+ * 桌機搶走 → 按完快捷鍵就不能繼續打字;
+ * 手機搶走 → 軟體鍵盤會收起來,每按一次都要重新叫出來。
+ * 在 mousedown 擋掉預設行為即可阻止 focus 轉移,且不會影響 click 事件。*/
+function keepFocus(btn) {
+	btn.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
+}
+
+(function wireKeyButtons() {
+	var seqBtns = elKeyRow.querySelectorAll('button[data-seq]'), i;
+
+	for (i = 0; i < seqBtns.length; i++) {
+		keepFocus(seqBtns[i]);
+		seqBtns[i].addEventListener('click', function() {
+			/* 快捷鍵本身已經是控制序列,不吃 Ctrl 修飾 → 按了就解除等待狀態 */
+			if (ctrlArmed) setCtrlArmed(false);
+			sendBytes(hexToBytes(this.getAttribute('data-seq')));
+			term.focus();
+		});
+	}
+
+	keepFocus(btnCtrl);
+	btnCtrl.addEventListener('click', function() {
+		setCtrlArmed(!ctrlArmed);   /* 再按一次可取消 */
+		term.focus();
+	});
+
+	keepFocus(btnBreak);
+	btnBreak.addEventListener('click', function() {
+		/* BREAK_SUPPORTED 為 false 時按鈕是 disabled,這裡只是韌體支援後的接點 */
+		if (!BREAK_SUPPORTED) return;
+		term.focus();
+	});
+})();
+
+/* ── 貼上 ──
+ * 手機上很難叫出 xterm 自己的貼上;網管貼設定檔片段又是日常,
+ * 所以多行一律先確認 —— 誤貼整頁設定到正式設備是會出事的。*/
+function doPaste() {
+	if (!rxChar) { say('尚未連線,無法貼上'); return; }
+	if (!navigator.clipboard || !navigator.clipboard.readText) {
+		say('此瀏覽器不允許網頁讀取剪貼簿。請改用終端本身的貼上(桌機 Ctrl+Shift+V 或按右鍵)');
+		term.focus();
+		return;
+	}
+	navigator.clipboard.readText().then(function(text) {
+		var payload, bytes, lines, head, secs, msg;
+
+		if (!text) { say('剪貼簿是空的'); term.focus(); return; }
+		/* 終端的 Enter 是 CR(0x0D)。CRLF/LF 一律轉成 CR,
+		 * 否則多送的 LF 會在裝置端變成一行空白指令(xterm 自己的貼上也是這樣處理)。*/
+		payload = text.replace(/\r\n|\r|\n/g, '\r');
+		bytes = new TextEncoder().encode(payload);
+		lines = (payload.match(/\r/g) || []).length +
+			(payload.charAt(payload.length - 1) === '\r' ? 0 : 1);
+
+		if (lines > 1) {
+			head = payload.split('\r')[0];
+			if (head.length > 60) head = head.slice(0, 60) + '…';
+			msg = '即將送出 ' + lines + ' 行（共 ' + bytes.length + ' 位元組）到裝置。\n\n' +
+				'第一行：' + head + '\n\n';
+			/* BLE 一次只寫 20 bytes,大段貼上會慢 → 先給個心理準備 */
+			secs = Math.round(bytes.length / 2000);
+			if (secs >= 2) msg += '（藍牙傳輸較慢，預估需要約 ' + secs + ' 秒）\n\n';
+			msg += '裝置會逐行執行，確定要送出嗎？';
+			if (!window.confirm(msg)) { say('已取消貼上'); term.focus(); return; }
+		}
+		if (ctrlArmed) setCtrlArmed(false);
+		sendBytes(bytes);
+		say('已貼上 ' + lines + ' 行(' + bytes.length + ' 位元組)');
+		term.focus();
+	}).catch(function(e) {
+		say('讀取剪貼簿失敗:' + e.message + '(瀏覽器可能拒絕了剪貼簿權限)');
+		term.focus();
+	});
+}
+
+/* ── 字級 ──
+ * 序列 console 不會協商視窗大小,裝置端多半假設 80 欄 —— 改欄數只會讓
+ * 裝置送來的換行位置對不上。所以寬度用「字級」調,欄數固定不動;
+ * 只有列數會跟著容器高度重算(捲動範圍才會剛好填滿畫面)。*/
+var fitTimer = null;
+
+function fitRows() {
+	var rowsEl, cellH, rows, cs, avail;
+
+	try {
+		rowsEl = term.element && term.element.querySelector('.xterm-rows');
+		if (!rowsEl || !term.rows) return;
+		/* 用實際畫出來的列高回推單列像素高,不去碰 xterm 的內部物件 */
+		cellH = rowsEl.offsetHeight / term.rows;
+		if (!(cellH > 4)) return;
+		cs = window.getComputedStyle(elTermHost);
+		avail = elTermHost.clientHeight -
+			parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+		rows = Math.floor(avail / cellH);
+		rows = Math.max(6, Math.min(200, rows));
+		if (rows !== term.rows) term.resize(term.cols, rows);
+	} catch (e) {
+		/* 量不到就維持現有尺寸 —— 版面沒填滿而已,不影響連線與輸入 */
+	}
+}
+
+function scheduleFit() {
+	if (fitTimer) clearTimeout(fitTimer);
+	fitTimer = setTimeout(function() { fitTimer = null; fitRows(); }, 120);
+}
+
+function applyFontSize(px, persist) {
+	px = Math.min(FONT_MAX, Math.max(FONT_MIN, px | 0));
+	term.options.fontSize = px;
+	elFontSize.textContent = String(px);
+	btnFontDown.disabled = (px <= FONT_MIN);
+	btnFontUp.disabled = (px >= FONT_MAX);
+	if (persist) {
+		try { localStorage.setItem(LS_FONT, String(px)); } catch (e) { /* 無痕模式會擋,忽略 */ }
+	}
+	setTimeout(fitRows, 0);   /* 等 xterm 重新量完字寬字高再算列數 */
+}
+
+/* ── 連線紀錄 ──
+ * 只收「裝置送來的輸出」(不含你打的字,所以密碼不會進紀錄)。
+ * 在資料流這一側累積,不從 xterm 的畫面緩衝反推 —— 捲出 scrollback 的內容也留得住。*/
+var logChunks = [];
+var logLen = 0;
+var logDecoder = new TextDecoder();   /* stream 模式:BLE 通知可能把一個 UTF-8 字元切成兩包 */
+
+function logAppend(u8) {
+	var s = logDecoder.decode(u8, { stream: true });
+
+	if (!s) return;
+	logChunks.push(s);
+	logLen += s.length;
+	while (logLen > LOG_LIMIT && logChunks.length > 1)
+		logLen -= logChunks.shift().length;
+	btnLog.disabled = false;
+}
+
+/* 純文字化:拿掉終端控制碼,讓紀錄檔用一般文字編輯器就看得懂。
+ * 只做「移除」不做畫面重演 —— 例如 --More-- 用 CR 覆寫的那行會留下空白,
+ * 這比假裝重現畫面誠實,也不會誤刪內容。*/
+var RE_OSC     = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;      /* 視窗標題等 OSC 序列 */
+var RE_CSI     = /\x1b\[[0-9;?<>=!]*[ -/]*[@-~]/g;      /* 顏色、游標移動等 CSI 序列 */
+var RE_CHARSET = /\x1b[()*+][ -/]*[0-9A-Za-z]/g;        /* ESC ( B 之類的字元集指定 */
+var RE_ESC2    = /\x1b[78=>MDEHc]/g;                    /* 存/取游標、小鍵盤模式等 */
+var RE_CTRL    = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;   /* 其餘控制碼(保留 Tab 與換行) */
+
+function toPlainText(raw) {
+	return raw
+		.replace(RE_OSC, '')
+		.replace(RE_CSI, '')
+		.replace(RE_CHARSET, '')
+		.replace(RE_ESC2, '')
+		.replace(/\r\n/g, '\n')
+		.replace(/\r/g, '\n')
+		.replace(RE_CTRL, '');
+}
+
+function two(n) { return (n < 10 ? '0' : '') + n; }
+
+function stamp(d, dateSep, sep, timeSep) {
+	return d.getFullYear() + dateSep + two(d.getMonth() + 1) + dateSep + two(d.getDate()) +
+		sep + two(d.getHours()) + timeSep + two(d.getMinutes()) + timeSep + two(d.getSeconds());
+}
+
+function downloadLog() {
+	var now = new Date();
+	var devName = (device && device.name) ? device.name : 'AirTTY';
+	var safeName = devName.replace(/[^A-Za-z0-9._-]+/g, '_');
+	var body = toPlainText(logChunks.join(''));
+	var header = '# AirTTY 網頁藍牙終端 —— 連線紀錄\n' +
+		'# 裝置：' + devName + '\n' +
+		'# 匯出時間：' + stamp(now, '-', ' ', ':') + '\n' +
+		'# 內容：裝置端送出的畫面輸出（不含你輸入的按鍵，因此不會含連線密碼）。\n' +
+		'#       已移除終端控制碼；緩衝上限 2 MB，超過時保留最新的部分。\n' +
+		'# 本檔由瀏覽器在你的裝置上產生，未經任何網路傳輸。\n' +
+		'# ' + '-'.repeat(60) + '\n';
+	/* Blob + blob: URL 全在本頁記憶體內完成,不發出任何網路請求 */
+	var blob = new Blob([header + body], { type: 'text/plain;charset=utf-8' });
+	var url = URL.createObjectURL(blob);
+	var a = document.createElement('a');
+
+	a.href = url;
+	a.download = safeName + '-' + stamp(now, '', '-', '') + '.txt';
+	document.body.appendChild(a);
+	a.click();
+	document.body.removeChild(a);
+	setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+	say('紀錄已下載(' + a.download + ')');
+	term.focus();
+}
+
+/* ── 工具列的收合 ──
+ * 手機預設展開(沒有實體按鍵,快捷鍵列是必需品);桌機預設收起,少佔畫面。
+ * 使用者按過就記住他的選擇。*/
+function setToolbarOpen(open, persist) {
+	elToolbar.classList.toggle('collapsed', !open);
+	btnKeys.classList.toggle('active', !!open);
+	btnKeys.setAttribute('aria-expanded', open ? 'true' : 'false');
+	if (persist) {
+		try { localStorage.setItem(LS_KEYS, open ? '1' : '0'); } catch (e) { /* 無痕模式會擋,忽略 */ }
+	}
+	setTimeout(fitRows, 0);
 }
 
 /* ── GATT 連線(含 Windows 首連 retry)── */
@@ -102,7 +412,11 @@ function wireUp(server) {
 		txChar = chars[1];
 		txChar.addEventListener('characteristicvaluechanged', function(ev) {
 			var dv = ev.target.value;
-			term.write(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
+			/* 複製一份再交出去:xterm 的 write 是排隊非同步處理,
+			 * 而事件裡的 DataView 背後緩衝區由瀏覽器的 BLE 堆疊持有 */
+			var u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+			term.write(u8);
+			logAppend(u8);
 		});
 		return txChar.startNotifications();
 	}).then(function() {
@@ -110,6 +424,7 @@ function wireUp(server) {
 		setButtons('connected');
 		say('已連上。輸入連線密碼後即進 console(輸入時不會回顯是正常的)');
 		term.focus();
+		fitRows();
 	});
 }
 
@@ -163,30 +478,67 @@ btnDisconnect.onclick = function() {
 	if (device && device.gatt.connected) device.gatt.disconnect();
 };
 
-/* ── 鍵盤 → 裝置:寫入串行化 + 分塊 ── */
+btnKeys.onclick = function() {
+	setToolbarOpen(elToolbar.classList.contains('collapsed'), true);
+};
+
+keepFocus(btnPaste);
+btnPaste.onclick = doPaste;
+
+keepFocus(btnFontDown);
+keepFocus(btnFontUp);
+btnFontDown.onclick = function() { applyFontSize(term.options.fontSize - 1, true); term.focus(); };
+btnFontUp.onclick = function() { applyFontSize(term.options.fontSize + 1, true); term.focus(); };
+
+keepFocus(btnLog);
+btnLog.onclick = downloadLog;
+
+window.addEventListener('resize', scheduleFit);
+if (window.visualViewport)
+	window.visualViewport.addEventListener('resize', scheduleFit);  /* 手機軟體鍵盤開合 */
+
+/* ── 鍵盤 → 裝置 ── */
 term.onData(function(data) {
+	var b;
+
 	if (!rxChar) return;
-	var bytes = new TextEncoder().encode(data);
-	var i;
-	for (i = 0; i < bytes.length; i += WRITE_CHUNK) {
-		(function(chunk) {
-			writeQueue = writeQueue.then(function() {
-				if (!rxChar) return;
-				/* 裝置端走 AcquireWrite(write command)→ 優先無回應寫,較快;
-				 * 特性不支援時退回有回應寫 */
-				return rxChar.properties.writeWithoutResponse
-					? rxChar.writeValueWithoutResponse(chunk)
-					: rxChar.writeValue(chunk);
-			}).catch(function() { /* 斷線競態:丟棄該鍵,斷線事件會接手 UI */ });
-		})(bytes.slice(i, i + WRITE_CHUNK));
+	if (ctrlArmed) {
+		setCtrlArmed(false);
+		b = ctrlByte(data.charAt(0));
+		if (b === null) {
+			say('Ctrl +「' + data.charAt(0) + '」沒有對應的控制碼,已照原樣送出');
+		} else {
+			sendBytes(new Uint8Array([b]));
+			data = data.slice(1);
+			if (!data) return;
+		}
 	}
+	sendText(data);
 });
 
-/* 開頁自檢 */
-if (envCheck()) {
-	say('按上方「選擇裝置並連線」開始。');
-	navigator.bluetooth.getAvailability && navigator.bluetooth.getAvailability()
-		.then(function(ok) {
-			if (!ok) say('⚠️ 此電腦目前沒有可用的藍牙介面(未開藍牙?)');
-		});
-}
+/* ── 開頁自檢與初始狀態 ── */
+(function init() {
+	var savedFont = null, savedKeys = null, coarse;
+
+	try {
+		savedFont = localStorage.getItem(LS_FONT);
+		savedKeys = localStorage.getItem(LS_KEYS);
+	} catch (e) { /* 無痕模式會擋,用預設值即可 */ }
+
+	applyFontSize(savedFont ? parseInt(savedFont, 10) : FONT_DEFAULT, false);
+
+	coarse = !!(window.matchMedia &&
+		window.matchMedia('(max-width: 820px), (pointer: coarse)').matches);
+	setToolbarOpen(savedKeys === null ? coarse : savedKeys === '1', false);
+
+	setKeysEnabled(false);
+	setCtrlArmed(false);
+
+	if (envCheck()) {
+		say('按上方「選擇裝置並連線」開始。');
+		navigator.bluetooth.getAvailability && navigator.bluetooth.getAvailability()
+			.then(function(ok) {
+				if (!ok) say('⚠️ 此電腦目前沒有可用的藍牙介面(未開藍牙?)');
+			});
+	}
+})();
