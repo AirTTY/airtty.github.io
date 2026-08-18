@@ -38,15 +38,18 @@ button.active { background: #1c4e8a; border-color: #2a6cb8; }
 #status { font-size: .92em; color: var(--dim); }
 #status.ok { color: var(--ok); }
 #status.err { color: var(--err); }
+/* 手機上快捷鍵列要佔位置，說明文字就不能無限長 → 超過就自己捲 */
 #hints {
 	padding: .5em 1em; font-size: .88em; color: var(--dim);
 	background: var(--panel); border-bottom: 1px solid var(--border);
+	max-height: 28vh; overflow-y: auto;
 }
 #hints code { color: var(--fg); background: #2e2e36; padding: 0 .35em; border-radius: 4px; }
 
 /* ── 快捷鍵／工具列 ──
  * 手機沒有 Tab／Esc／Ctrl／方向鍵，這排按鈕是行動裝置操作 console 的主力。
- * 觸控目標一律 ≥40px（Android／iOS 人機介面指引的最小可靠點擊尺寸）。*/
+ * 觸控目標一律 ≥40px（Android／iOS 人機介面指引的最小可靠點擊尺寸）。
+ * 按鈕一律 tabindex="-1"：不進 Tab 鍵順序，按完由 JS 立刻把焦點還給終端。*/
 #toolbar {
 	display: flex; flex-direction: column; gap: .4em;
 	padding: .5em .8em; background: var(--panel);
@@ -57,17 +60,43 @@ button.active { background: #1c4e8a; border-color: #2a6cb8; }
 #toolbar button {
 	min-height: 40px; min-width: 44px; padding: .3em .7em;
 	-webkit-user-select: none; user-select: none;
+	-webkit-tap-highlight-color: transparent;   /* 用自己的按壓樣式，不要系統的灰塊 */
+	transition: background .08s, transform .08s;
 }
 #toolbar button.key {
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 	font-size: .95em;
 }
+/* 按壓回饋：使用者要看得出「有點到」——:active 給桌機與多數觸控，
+ * .flash 由 JS 補上，確保連按同一顆時每次都看得到 */
+#toolbar button:active { background: #4a4a58; transform: scale(.95); }
+#toolbar button.flash { background: #2a6cb8; border-color: var(--accent); }
+/* 未連線時按鍵微暗，但仍可按 —— 按下去會跳提示，不做成沉默的死鈕 */
+#toolbar.notlive button.key { opacity: .65; }
+/* 韌體尚未支援的功能 */
+#toolbar button.unavail { opacity: .45; }
 /* Ctrl 等待下一鍵時的視覺回饋：橘色＋外框，手機上一眼可辨 */
 #btnCtrl.armed {
 	background: #8a5a1c; border-color: var(--warn); color: #fff;
 	box-shadow: 0 0 0 2px rgba(255, 159, 10, .35);
+	opacity: 1;
 }
 #kbHint { font-size: .85em; color: var(--warn); margin-left: .3em; }
+
+/* 提示浮條：手機沒有 hover，tooltip 看不到 → 所有回饋走這裡 */
+#toast {
+	position: fixed; left: 50%; bottom: 1.4em; z-index: 20;
+	transform: translateX(-50%) translateY(.8em);
+	max-width: 92vw; text-align: center;
+	padding: .6em 1.1em; border-radius: 8px;
+	background: #33333c; color: var(--fg); border: 1px solid var(--border);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, .5);
+	font-size: .95em; line-height: 1.4;
+	opacity: 0; pointer-events: none;
+	transition: opacity .18s ease, transform .18s ease;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.warn { border-color: var(--warn); color: #ffd9a0; }
 .grp {
 	display: flex; align-items: center; gap: .2em;
 	border: 1px solid var(--border); border-radius: 6px; padding: 0 .25em;
@@ -108,40 +137,48 @@ a { color: var(--accent); }
 	<a href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/README.md">本頁說明文件</a>。
 </div>
 
-<!-- 快捷鍵列：data-seq 是要送出的位元組（16 進位），由 app.js 統一解析後走既有的寫入佇列 -->
-<div id="toolbar" class="collapsed">
+<!-- 快捷鍵列：data-seq 是要送出的位元組（16 進位），由 app.js 統一解析後走既有的寫入佇列。
+     常用組合一律做成「按一下就送出」的獨立按鈕 —— 不要求使用者記住兩段式操作。 -->
+<div id="toolbar" class="collapsed notlive">
 	<div class="krow" id="keyRow">
-		<button class="key" data-seq="09"     title="Tab —— 指令補全">Tab</button>
-		<button class="key" data-seq="1b"     title="Esc">Esc</button>
-		<button class="key" data-seq="3f"     title="? —— Cisco 式情境說明">?</button>
-		<button class="key" id="btnCtrl" aria-pressed="false"
-			title="Ctrl 修飾鍵 —— 按下後再從鍵盤敲一個字元，該字元會以 Ctrl+它送出">Ctrl</button>
-		<button class="key" data-seq="03"     title="Ctrl+C —— 中斷目前指令">Ctrl+C</button>
-		<button class="key" data-seq="1a"     title="Ctrl+Z —— 回到特權模式／暫停">Ctrl+Z</button>
-		<button class="key" data-seq="1e"     title="Ctrl+Shift+6（Ctrl+^）—— Cisco 中斷 ping／traceroute／telnet">Ctrl+^</button>
-		<button class="key" data-seq="1b5b41" aria-label="上" title="↑ —— 上一筆歷史指令">↑</button>
-		<button class="key" data-seq="1b5b42" aria-label="下" title="↓ —— 下一筆歷史指令">↓</button>
-		<button class="key" data-seq="1b5b44" aria-label="左" title="← 游標左移">←</button>
-		<button class="key" data-seq="1b5b43" aria-label="右" title="→ 游標右移">→</button>
+		<button class="key" tabindex="-1" data-seq="09"     title="Tab —— 指令補全">Tab</button>
+		<button class="key" tabindex="-1" data-seq="1b"     title="Esc">Esc</button>
+		<button class="key" tabindex="-1" data-seq="3f"     title="? —— Cisco 式情境說明">?</button>
+		<button class="key" tabindex="-1" data-seq="0d"     title="Enter（CR）">⏎</button>
+		<button class="key" tabindex="-1" data-seq="03"     title="Ctrl+C —— 中斷目前指令">Ctrl+C</button>
+		<button class="key" tabindex="-1" data-seq="1a"     title="Ctrl+Z —— 回到特權模式／暫停">Ctrl+Z</button>
+		<button class="key" tabindex="-1" data-seq="1e"     title="Ctrl+Shift+6（Ctrl+^）—— Cisco 中斷 ping／traceroute／telnet">Ctrl+^</button>
+		<button class="key" tabindex="-1" data-seq="01"     title="Ctrl+A —— 游標移到行首">Ctrl+A</button>
+		<button class="key" tabindex="-1" data-seq="04"     title="Ctrl+D —— 刪除游標處字元／結束輸入">Ctrl+D</button>
+		<button class="key" tabindex="-1" data-seq="15"     title="Ctrl+U —— 清掉整行">Ctrl+U</button>
+		<button class="key" tabindex="-1" data-seq="17"     title="Ctrl+W —— 刪掉前一個單字">Ctrl+W</button>
+		<button class="key" tabindex="-1" data-seq="1b5b41" aria-label="上" title="↑ —— 上一筆歷史指令">↑</button>
+		<button class="key" tabindex="-1" data-seq="1b5b42" aria-label="下" title="↓ —— 下一筆歷史指令">↓</button>
+		<button class="key" tabindex="-1" data-seq="1b5b44" aria-label="左" title="← 游標左移">←</button>
+		<button class="key" tabindex="-1" data-seq="1b5b43" aria-label="右" title="→ 游標右移">→</button>
 		<!-- Break 是線路狀態訊號不是字元，BLE 資料流送不出去；目前韌體的 BLE 通道
-		     也沒有頻外指令機制 → 停用並說明原因，不做成按了沒反應的假按鈕 -->
-		<button class="key" id="btnBreak" disabled
+		     也沒有頻外指令機制。手機看不到 tooltip → 保持可按，按下去用提示浮條說明原因 -->
+		<button class="key unavail" tabindex="-1" id="btnBreak" aria-disabled="true"
 			title="送出序列 Break 訊號（中斷 Sun／HP 主機、進 ROM monitor）。&#10;目前韌體的藍牙通道尚無此功能，需要韌體 v1.2 以上；&#10;現在請改用網頁終端（管理介面）或 RFC2217 連 4001 埠。">Break</button>
+		<!-- 進階備援：上面沒列到的罕用組合（Ctrl+X、Ctrl+R…）才需要用到 -->
+		<button class="key" tabindex="-1" id="btnCtrl" aria-pressed="false"
+			title="進階：按一下之後再敲一個鍵，該鍵會以 Ctrl+它送出（給上面沒列到的罕用組合用）">Ctrl+…</button>
 		<span id="kbHint"></span>
 	</div>
 	<div class="krow">
-		<button id="btnPaste" title="從剪貼簿貼上並送出（多行會先確認）">📋 貼上</button>
+		<button id="btnPaste" tabindex="-1" title="從剪貼簿貼上並送出（多行會先確認）">📋 貼上</button>
 		<span class="grp">
-			<button id="btnFontDown" aria-label="縮小字體" title="縮小字體">A−</button>
+			<button id="btnFontDown" tabindex="-1" aria-label="縮小字體" title="縮小字體">A−</button>
 			<span id="fontSize">14</span>
-			<button id="btnFontUp" aria-label="放大字體" title="放大字體">A+</button>
+			<button id="btnFontUp" tabindex="-1" aria-label="放大字體" title="放大字體">A+</button>
 		</span>
-		<button id="btnLog" disabled
+		<button id="btnLog" tabindex="-1"
 			title="把本次連線收到的畫面輸出存成純文字檔（在瀏覽器本機產生，不會上傳）">⬇ 下載紀錄</button>
 	</div>
 </div>
 
 <div id="term"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 <script src="xterm.js"></script>
 <script src="app.js"></script>
 </body>

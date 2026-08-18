@@ -28,6 +28,14 @@
  *
  * 相依：xterm.js v5.x（本目錄自帶）。用到的公開 API 僅 Terminal / write /
  * onData / focus / resize / options / element —— 已對照本目錄這份 bundle 確認。
+ *
+ * UI 原則（實測踩過坑後定下的）：
+ * - 常用按鍵一律「按一下就送出」，不要求使用者記住兩段式操作；Ctrl 修飾模式
+ *   只留作罕用組合的備援，放在最後一顆。
+ * - 快捷鍵按鈕不使用 disabled、也不在 mousedown 玩 preventDefault：
+ *   前者按了沒反應分不清是沒點到還是沒連線，後者在行動瀏覽器上會讓 click 不觸發。
+ *   一律走單純的 click，按完 term.focus() 把焦點還給終端。
+ * - 每次點擊都有按壓回饋 + 必要時的提示浮條（手機看不到 title tooltip）。
  */
 'use strict';
 
@@ -61,6 +69,7 @@ var elKeyRow = document.getElementById('keyRow');
 var elKbHint = document.getElementById('kbHint');
 var elFontSize = document.getElementById('fontSize');
 var elTermHost = document.getElementById('term');
+var elToast = document.getElementById('toast');
 var btnKeys = document.getElementById('btnKeys');
 var btnCtrl = document.getElementById('btnCtrl');
 var btnBreak = document.getElementById('btnBreak');
@@ -93,7 +102,29 @@ function setButtons(state) {
 	btnReconnect.classList.toggle('hidden', state !== 'dropped');
 	btnDisconnect.classList.toggle('hidden', state !== 'connected');
 	btnConnect.disabled = btnReconnect.disabled = (state === 'connecting');
-	setKeysEnabled(state === 'connected');
+	setKeysLive(state === 'connected');
+}
+
+/* 提示浮條:手機沒有 hover,title tooltip 看不到 → 所有即時回饋走這裡。
+ * (終端內的 say() 只適合連線相關訊息,快捷鍵的回饋不該污染 console 畫面) */
+var toastTimer = null;
+
+function toast(msg, kind) {
+	elToast.textContent = msg;
+	elToast.className = 'show' + (kind ? ' ' + kind : '');
+	if (toastTimer) clearTimeout(toastTimer);
+	toastTimer = setTimeout(function() { elToast.className = ''; }, 2600);
+}
+
+var NOT_CONNECTED = '尚未連線 —— 請先按上方「🔗 選擇裝置並連線」';
+
+/* 按壓回饋:CSS 的 :active 在部分 Android 瀏覽器上不一定看得到,
+ * 這裡再補一個短暫的 class,讓使用者確定「有點到」*/
+function flash(btn) {
+	btn.classList.remove('flash');
+	void btn.offsetWidth;   /* 強制 reflow,連按同一顆時才會重播 */
+	btn.classList.add('flash');
+	setTimeout(function() { btn.classList.remove('flash'); }, 170);
 }
 
 function say(line) {
@@ -151,13 +182,11 @@ function hexToBytes(hex) {
 	return out;
 }
 
-function setKeysEnabled(live) {
-	var all = elKeyRow.querySelectorAll('button'), i;
-
-	for (i = 0; i < all.length; i++) all[i].disabled = !live;
-	/* Break 另有條件:韌體沒支援就一直停用 */
-	btnBreak.disabled = !(live && BREAK_SUPPORTED);
-	btnPaste.disabled = !live;
+/* 未連線時「不」把按鈕設成 disabled —— disabled 的按鈕不會發出 click 事件,
+ * 使用者按了完全沒反應,分不清是「沒點到」還是「沒連線」。
+ * 改成:保持可按、視覺微暗,按下去用提示浮條講清楚原因。*/
+function setKeysLive(live) {
+	elToolbar.classList.toggle('notlive', !live);
 	if (!live) setCtrlArmed(false);
 }
 
@@ -186,20 +215,17 @@ function ctrlByte(ch) {
 	return null;
 }
 
-/* 按鈕不能搶走終端的焦點:
- * 桌機搶走 → 按完快捷鍵就不能繼續打字;
- * 手機搶走 → 軟體鍵盤會收起來,每按一次都要重新叫出來。
- * 在 mousedown 擋掉預設行為即可阻止 focus 轉移,且不會影響 click 事件。*/
-function keepFocus(btn) {
-	btn.addEventListener('mousedown', function(ev) { ev.preventDefault(); });
-}
-
+/* 事件模型:單純的 click,不玩 preventDefault。
+ * (先前版本在 mousedown 擋預設行為想保住軟體鍵盤,實測在行動瀏覽器上
+ *  連 click 都不會發 → 按鈕整排沒反應。改成按鈕 tabindex="-1" 不進 Tab 順序,
+ *  送完 byte 直接呼叫 term.focus() 把焦點拉回終端。) */
 (function wireKeyButtons() {
 	var seqBtns = elKeyRow.querySelectorAll('button[data-seq]'), i;
 
 	for (i = 0; i < seqBtns.length; i++) {
-		keepFocus(seqBtns[i]);
 		seqBtns[i].addEventListener('click', function() {
+			flash(this);
+			if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
 			/* 快捷鍵本身已經是控制序列,不吃 Ctrl 修飾 → 按了就解除等待狀態 */
 			if (ctrlArmed) setCtrlArmed(false);
 			sendBytes(hexToBytes(this.getAttribute('data-seq')));
@@ -207,16 +233,23 @@ function keepFocus(btn) {
 		});
 	}
 
-	keepFocus(btnCtrl);
 	btnCtrl.addEventListener('click', function() {
+		flash(btnCtrl);
+		if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
 		setCtrlArmed(!ctrlArmed);   /* 再按一次可取消 */
+		toast(ctrlArmed ? 'Ctrl 已按下 —— 請再敲一個鍵' : 'Ctrl 已取消');
 		term.focus();
 	});
 
-	keepFocus(btnBreak);
 	btnBreak.addEventListener('click', function() {
-		/* BREAK_SUPPORTED 為 false 時按鈕是 disabled,這裡只是韌體支援後的接點 */
-		if (!BREAK_SUPPORTED) return;
+		flash(btnBreak);
+		/* 手機看不到 tooltip → 用提示浮條講原因,而不是做成按了沒反應的死鈕 */
+		if (!BREAK_SUPPORTED) {
+			toast('Break 需要韌體 v1.2 以上。目前請改用管理介面的網頁終端，' +
+				'或用支援 RFC 2217 的軟體連 4001 埠', 'warn');
+			return;
+		}
+		if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
 		term.focus();
 	});
 })();
@@ -225,16 +258,17 @@ function keepFocus(btn) {
  * 手機上很難叫出 xterm 自己的貼上;網管貼設定檔片段又是日常,
  * 所以多行一律先確認 —— 誤貼整頁設定到正式設備是會出事的。*/
 function doPaste() {
-	if (!rxChar) { say('尚未連線,無法貼上'); return; }
+	flash(btnPaste);
+	if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
 	if (!navigator.clipboard || !navigator.clipboard.readText) {
-		say('此瀏覽器不允許網頁讀取剪貼簿。請改用終端本身的貼上(桌機 Ctrl+Shift+V 或按右鍵)');
+		toast('此瀏覽器不允許網頁讀取剪貼簿。請改用終端本身的貼上（桌機 Ctrl+Shift+V 或按右鍵）', 'warn');
 		term.focus();
 		return;
 	}
 	navigator.clipboard.readText().then(function(text) {
 		var payload, bytes, lines, head, secs, msg;
 
-		if (!text) { say('剪貼簿是空的'); term.focus(); return; }
+		if (!text) { toast('剪貼簿是空的'); term.focus(); return; }
 		/* 終端的 Enter 是 CR(0x0D)。CRLF/LF 一律轉成 CR,
 		 * 否則多送的 LF 會在裝置端變成一行空白指令(xterm 自己的貼上也是這樣處理)。*/
 		payload = text.replace(/\r\n|\r|\n/g, '\r');
@@ -251,14 +285,14 @@ function doPaste() {
 			secs = Math.round(bytes.length / 2000);
 			if (secs >= 2) msg += '（藍牙傳輸較慢，預估需要約 ' + secs + ' 秒）\n\n';
 			msg += '裝置會逐行執行，確定要送出嗎？';
-			if (!window.confirm(msg)) { say('已取消貼上'); term.focus(); return; }
+			if (!window.confirm(msg)) { toast('已取消貼上'); term.focus(); return; }
 		}
 		if (ctrlArmed) setCtrlArmed(false);
 		sendBytes(bytes);
-		say('已貼上 ' + lines + ' 行(' + bytes.length + ' 位元組)');
+		toast('已貼上 ' + lines + ' 行（' + bytes.length + ' 位元組）');
 		term.focus();
 	}).catch(function(e) {
-		say('讀取剪貼簿失敗:' + e.message + '(瀏覽器可能拒絕了剪貼簿權限)');
+		toast('讀取剪貼簿失敗：' + e.message + '（瀏覽器可能拒絕了剪貼簿權限）', 'warn');
 		term.focus();
 	});
 }
@@ -298,8 +332,9 @@ function applyFontSize(px, persist) {
 	px = Math.min(FONT_MAX, Math.max(FONT_MIN, px | 0));
 	term.options.fontSize = px;
 	elFontSize.textContent = String(px);
-	btnFontDown.disabled = (px <= FONT_MIN);
-	btnFontUp.disabled = (px >= FONT_MAX);
+	/* 到上下限只做視覺變暗,不設 disabled —— 同樣是為了讓「按了有回應」*/
+	btnFontDown.classList.toggle('unavail', px <= FONT_MIN);
+	btnFontUp.classList.toggle('unavail', px >= FONT_MAX);
 	if (persist) {
 		try { localStorage.setItem(LS_FONT, String(px)); } catch (e) { /* 無痕模式會擋,忽略 */ }
 	}
@@ -321,7 +356,6 @@ function logAppend(u8) {
 	logLen += s.length;
 	while (logLen > LOG_LIMIT && logChunks.length > 1)
 		logLen -= logChunks.shift().length;
-	btnLog.disabled = false;
 }
 
 /* 純文字化:拿掉終端控制碼,讓紀錄檔用一般文字編輯器就看得懂。
@@ -352,6 +386,9 @@ function stamp(d, dateSep, sep, timeSep) {
 }
 
 function downloadLog() {
+	flash(btnLog);
+	if (!logLen) { toast('目前沒有可下載的紀錄 —— 連上並收到輸出後再試'); return; }
+
 	var now = new Date();
 	var devName = (device && device.name) ? device.name : 'AirTTY';
 	var safeName = devName.replace(/[^A-Za-z0-9._-]+/g, '_');
@@ -374,7 +411,7 @@ function downloadLog() {
 	a.click();
 	document.body.removeChild(a);
 	setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
-	say('紀錄已下載(' + a.download + ')');
+	toast('紀錄已下載：' + a.download);
 	term.focus();
 }
 
@@ -482,15 +519,21 @@ btnKeys.onclick = function() {
 	setToolbarOpen(elToolbar.classList.contains('collapsed'), true);
 };
 
-keepFocus(btnPaste);
 btnPaste.onclick = doPaste;
 
-keepFocus(btnFontDown);
-keepFocus(btnFontUp);
-btnFontDown.onclick = function() { applyFontSize(term.options.fontSize - 1, true); term.focus(); };
-btnFontUp.onclick = function() { applyFontSize(term.options.fontSize + 1, true); term.focus(); };
+btnFontDown.onclick = function() {
+	flash(btnFontDown);
+	if (term.options.fontSize <= FONT_MIN) { toast('已經是最小字級（' + FONT_MIN + '）'); return; }
+	applyFontSize(term.options.fontSize - 1, true);
+	term.focus();
+};
+btnFontUp.onclick = function() {
+	flash(btnFontUp);
+	if (term.options.fontSize >= FONT_MAX) { toast('已經是最大字級（' + FONT_MAX + '）'); return; }
+	applyFontSize(term.options.fontSize + 1, true);
+	term.focus();
+};
 
-keepFocus(btnLog);
 btnLog.onclick = downloadLog;
 
 window.addEventListener('resize', scheduleFit);
@@ -531,7 +574,7 @@ term.onData(function(data) {
 		window.matchMedia('(max-width: 820px), (pointer: coarse)').matches);
 	setToolbarOpen(savedKeys === null ? coarse : savedKeys === '1', false);
 
-	setKeysEnabled(false);
+	setKeysLive(false);
 	setCtrlArmed(false);
 
 	if (envCheck()) {
