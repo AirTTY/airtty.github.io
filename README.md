@@ -73,16 +73,16 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 
 商用同類產品中最知名的是 [Get Console 的 Airconsole](https://www.get-console.com/shop/en/27-airconsole)。
 **但截至 2026-08，原廠功能完整的主力機種（Standard 2.0／XL 2.0／Mini 2.0／Pro 2.0L）
-在官網商店已無販售品項**（各分類頁均顯示 "There are no products in this category"），
-**現售的主機只剩 Airconsole LE（US$69）** —— 一款純藍牙 BLE 的單埠轉接器。
+在官網商店已無販售品項，可能已停售**（各分類頁均顯示 "There are no products in this category"）；
+**現售的主機只剩 Airconsole LE** —— 一款純藍牙 BLE 的單埠轉接器，
+沒有 WiFi、沒有網頁介面、也沒有 Telnet。
 
-AirTTY 的定位因此很直接：**用開放硬體與開源軟體，以更低的價格，
+AirTTY 的定位因此很直接：**用開放硬體與開源軟體，
 提供原廠已停售機種等級（甚至更完整）的功能 —— 而且現在買得到。**
 
 | | **AirTTY A1** | **Airconsole LE**（原廠現售） | **Airconsole 2.0 系列**（Standard／XL，官網已無販售品項） |
 | --- | --- | --- | --- |
-| 販售狀態 | ✅ 現售 | ✅ 現售（US$69） | ❌ 已無販售品項（2026-08 查閱）※ |
-| 價格 | **顯著低於原廠**（基礎硬體為量產平價行動路由器；定價以通路公告為準） | US$69 | 停售前約 US$89～139 |
+| 販售狀態 | ✅ 現售 | ✅ 現售 | ❌ 已無販售品項，可能已停售（2026-08 查閱）※ |
 | WiFi | ✅ 802.11n，AP 直連 | ❌ **無 WiFi** | ✅ |
 | 藍牙 | ✅ 雙模：BLE + 傳統 SPP | ✅ 僅 BLE（BT 4.2 single-mode） | ✅ |
 | 有線網路 | ✅ RJ45 | ❌ | ✅（部分型號） |
@@ -104,13 +104,13 @@ AirTTY 的定位因此很直接：**用開放硬體與開源軟體，以更低�
 > [XL 2.0](https://www.get-console.com/shop/en/29-airconsole-xl-20)、
 > [Mini 2.0](https://www.get-console.com/shop/en/25-airconsole-mini-20) 分類頁皆顯示
 > "There are no products in this category"，Pro 2.0L 亦無可購買品項；
-> 現售僅 [Airconsole LE](https://www.get-console.com/shop/en/36-airconsole-le)（US$69）與配件。
-> 「已無販售品項」為官網商店現況，不等於官方發布停產聲明。
+> 現售僅 [Airconsole LE](https://www.get-console.com/shop/en/36-airconsole-le) 與配件。
+> 「可能已停售」為官網商店現況的合理推斷，原廠並未發布正式停產聲明。
 > LE 規格出自[原廠 LE 產品頁](http://www.get-console.com/airconsole-le/)與
 > [支援中心](https://support.get-console.com/support/solutions/5000169749)。
 > 「—（官方規格頁未列）」表示原廠公開頁面查不到該功能，不代表確定沒有。
 > 持平地說：原廠的強項在 iOS 原廠 App 與企業集中管理；LE 的強項在以月計的待機（長駐場景）。
-> AirTTY 的強項在**價格、功能完整度（WiFi＋雙模藍牙＋網頁工具箱）、雙埠，與「現在買得到」**。
+> AirTTY 的強項在**功能完整度（WiFi＋雙模藍牙＋網頁工具箱）、雙埠，與「現在買得到」**。
 
 ---
 
