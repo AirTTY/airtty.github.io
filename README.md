@@ -72,32 +72,45 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 ## 與原廠 Airconsole 的比較
 
 商用同類產品中最知名的是 [Get Console 的 Airconsole](https://www.get-console.com/shop/en/27-airconsole)。
-AirTTY 的定位很直接：**用開放硬體與開源軟體，以遠低於原廠的價格，做到同等甚至更完整的現場功能。**
+**但截至 2026-08，原廠功能完整的主力機種（Standard 2.0／XL 2.0／Mini 2.0／Pro 2.0L）
+在官網商店已無販售品項**（各分類頁均顯示 "There are no products in this category"），
+**現售的主機只剩 Airconsole LE（US$69）** —— 一款純藍牙 BLE 的單埠轉接器。
 
-| | **AirTTY A1** | **Airconsole（Get Console 原廠）** |
-| --- | --- | --- |
-| 價格 | **顯著低於原廠**（基礎硬體為量產平價行動路由器，成本結構天生較低；定價以通路公告為準） | LE 款 US$69 起；Standard 約 US$89；XL US$139（2017 年評測價）※ |
-| 同時序列埠數 | **2 埠**（搭配 USB hub，各埠獨立參數／密碼／服務埠） | 1 埠 |
-| 序列裝置自動發現 | ✅ 插上即辨識晶片與 USB ID，熱插拔即時反應 | ✅（官方稱 auto-detection） |
-| 序列參數設定 | ✅ 網頁點選（鮑率／資料位元／校驗／停止位元／流控） | ✅ 網頁管理介面 |
-| 免安裝的瀏覽器藍牙終端 | ✅ **Chrome／Edge 開網頁即連（BLE），不必切 WiFi、不必配對、不必裝 App** | —（官方規格頁未列） |
-| 免安裝的 WiFi 網頁終端 | ✅ | ✅ |
-| Telnet／Raw TCP／RFC2217 | ✅ | ✅ |
-| 傳統藍牙 SPP（系統 COM 埠） | ✅ | ✅ |
-| iPhone／iPad | 透過 BLE + App Store 終端 App（如 BTerm） | ✅ 原廠 Get Console App（整合度較高） |
-| 檔案伺服器（讓設備 TFTP／HTTP／FTP／SCP 抓韌體） | ✅ | —（官方規格頁未列） |
-| CDP／LLDP 鄰居辨識（這條線接在哪台交換器哪個埠） | ✅ | —（官方規格頁未列） |
-| 遠端封包擷取（筆電 Wireshark 直接抓） | ✅ | —（官方規格頁未列） |
-| 企業集中管理／雲端隧道 | —（無此功能） | ✅ Enterprise Server（需另購授權） |
-| 電池 | 內建 5200mAh 鋰電池（續航實測值待公布） | Standard 標稱 4 小時；XL 標稱 12 小時 |
-| 韌體 | **開源（GPL 合規），可自行編譯、稽核、客製** | 封閉 |
+AirTTY 的定位因此很直接：**用開放硬體與開源軟體，以更低的價格，
+提供原廠已停售機種等級（甚至更完整）的功能 —— 而且現在買得到。**
 
-> ※ 原廠價格查自 [get-console.com 商店頁](https://www.get-console.com/shop/en/27-airconsole)（2026-08 查閱，
-> LE 款 US$69 有標價，其餘型號官網未標；XL US$139 出自
-> [2017 年第三方評測](https://blog.michaelfmcnamara.com/2017/03/airconsole-portable-serial-ethernetwifibluetooth-console-server/)）。
+| | **AirTTY A1** | **Airconsole LE**（原廠現售） | **Airconsole 2.0 系列**（Standard／XL，官網已無販售品項） |
+| --- | --- | --- | --- |
+| 販售狀態 | ✅ 現售 | ✅ 現售（US$69） | ❌ 已無販售品項（2026-08 查閱）※ |
+| 價格 | **顯著低於原廠**（基礎硬體為量產平價行動路由器；定價以通路公告為準） | US$69 | 停售前約 US$89～139 |
+| WiFi | ✅ 802.11n，AP 直連 | ❌ **無 WiFi** | ✅ |
+| 藍牙 | ✅ 雙模：BLE + 傳統 SPP | ✅ 僅 BLE（BT 4.2 single-mode） | ✅ |
+| 有線網路 | ✅ RJ45 | ❌ | ✅（部分型號） |
+| 免安裝的 WiFi 網頁終端 | ✅ 瀏覽器直開 | ❌（無網頁介面） | ✅ |
+| 免安裝的瀏覽器藍牙終端 | ✅ **Chrome／Edge 開網頁即連，不必配對、不必裝 App** | ❌（需 App 或 BLE 終端軟體） | — |
+| Telnet／Raw TCP／RFC2217 | ✅ | ❌ | ✅ |
+| 同時序列埠數 | **2 埠**（搭配 USB hub，各埠獨立參數／密碼／服務埠） | 1 埠（固定 DB9 或 RJ45） | 1 埠 |
+| 序列裝置自動發現 | ✅ USB 轉接頭插上即辨識晶片與 USB ID，熱插拔即時反應 | —（埠是固定的） | ✅ |
+| 序列參數網頁設定 | ✅ 鮑率／資料位元／校驗／停止位元／流控全部網頁點選 | ❌ | ✅ |
+| 檔案伺服器（讓設備 TFTP／HTTP／FTP／SCP 抓韌體） | ✅ | ❌ | —（官方規格頁未列） |
+| CDP／LLDP 鄰居辨識 | ✅ | ❌ | —（官方規格頁未列） |
+| 遠端封包擷取（筆電 Wireshark 直接抓） | ✅ | ❌ | —（官方規格頁未列） |
+| iPhone／iPad | 透過 BLE + App Store 終端 App（如 BTerm） | ✅ 原廠 Get Console App | ✅ 原廠 Get Console App |
+| 企業集中管理／雲端隧道 | —（無此功能） | —  | ✅ Enterprise Server（需另購授權） |
+| 電池 | 內建 5200mAh 鋰電池（續航實測值待公布） | 內建（待機以月計，適合長駐） | Standard 標稱 4 小時；XL 標稱 12 小時 |
+| 韌體 | **開源（GPL 合規），可自行編譯、稽核、客製** | 封閉 | 封閉 |
+
+> ※ 查證紀錄（2026-08）：[Standard 2.0](https://www.get-console.com/shop/en/28-airconsole-standard-20)、
+> [XL 2.0](https://www.get-console.com/shop/en/29-airconsole-xl-20)、
+> [Mini 2.0](https://www.get-console.com/shop/en/25-airconsole-mini-20) 分類頁皆顯示
+> "There are no products in this category"，Pro 2.0L 亦無可購買品項；
+> 現售僅 [Airconsole LE](https://www.get-console.com/shop/en/36-airconsole-le)（US$69）與配件。
+> 「已無販售品項」為官網商店現況，不等於官方發布停產聲明。
+> LE 規格出自[原廠 LE 產品頁](http://www.get-console.com/airconsole-le/)與
+> [支援中心](https://support.get-console.com/support/solutions/5000169749)。
 > 「—（官方規格頁未列）」表示原廠公開頁面查不到該功能，不代表確定沒有。
-> 原廠的強項在 iOS 原廠 App 與企業集中管理；AirTTY 的強項在**價格、雙埠、免安裝的瀏覽器藍牙路徑，
-> 與完整的現場工具箱（檔案伺服器／LLDP／封包擷取）**。
+> 持平地說：原廠的強項在 iOS 原廠 App 與企業集中管理；LE 的強項在以月計的待機（長駐場景）。
+> AirTTY 的強項在**價格、功能完整度（WiFi＋雙模藍牙＋網頁工具箱）、雙埠，與「現在買得到」**。
 
 ---
 
