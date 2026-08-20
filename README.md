@@ -57,11 +57,47 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 
 **其他隨附功能：**
 
-- **自動辨識序列轉接頭** —— FTDI / CP210x / CH340 / PL2303 / USB CDC-ACM 驅動皆已內建，插上即用，可同時接兩個序列埠。
+- **雙序列埠，一台顧兩台設備** —— 搭配 USB hub 可同時接兩條 console 線（例如兩條 FTDI），
+  兩埠各自獨立：各有自己的網頁終端、Telnet 埠（4001／4002）、序列參數與連線密碼。
+- **序列裝置全自動發現** —— FTDI / CP210x / CH340 / PL2303 / USB CDC-ACM 驅動皆已內建，
+  插上（含熱插拔）即自動辨識晶片型號與 USB ID，儀表板直接長出裝置卡；
+  鮑率、資料位元、校驗、停止位元、流量控制**全部在網頁上點選設定**，不必打任何指令。
 - **檔案伺服器** —— 把韌體檔上傳到 AirTTY，讓設備自己用 TFTP／HTTP／FTP／SCP 抓檔升級。
 - **網路工具** —— 用 CDP／LLDP 看「這台接在哪台交換器的哪個埠」。
 - **遠端封包擷取** —— 讓筆電上的 Wireshark 抓 AirTTY 這一側的封包。
 - **一鍵診斷** —— 路徑追蹤、頻寬測試、序列埠狀態、LAN 裝置掃描等現場排查按鈕。
+
+---
+
+## 與原廠 Airconsole 的比較
+
+商用同類產品中最知名的是 [Get Console 的 Airconsole](https://www.get-console.com/shop/en/27-airconsole)。
+AirTTY 的定位很直接：**用開放硬體與開源軟體，以遠低於原廠的價格，做到同等甚至更完整的現場功能。**
+
+| | **AirTTY A1** | **Airconsole（Get Console 原廠）** |
+| --- | --- | --- |
+| 價格 | **顯著低於原廠**（基礎硬體為量產平價行動路由器，成本結構天生較低；定價以通路公告為準） | LE 款 US$69 起；Standard 約 US$89；XL US$139（2017 年評測價）※ |
+| 同時序列埠數 | **2 埠**（搭配 USB hub，各埠獨立參數／密碼／服務埠） | 1 埠 |
+| 序列裝置自動發現 | ✅ 插上即辨識晶片與 USB ID，熱插拔即時反應 | ✅（官方稱 auto-detection） |
+| 序列參數設定 | ✅ 網頁點選（鮑率／資料位元／校驗／停止位元／流控） | ✅ 網頁管理介面 |
+| 免安裝的瀏覽器藍牙終端 | ✅ **Chrome／Edge 開網頁即連（BLE），不必切 WiFi、不必配對、不必裝 App** | —（官方規格頁未列） |
+| 免安裝的 WiFi 網頁終端 | ✅ | ✅ |
+| Telnet／Raw TCP／RFC2217 | ✅ | ✅ |
+| 傳統藍牙 SPP（系統 COM 埠） | ✅ | ✅ |
+| iPhone／iPad | 透過 BLE + App Store 終端 App（如 BTerm） | ✅ 原廠 Get Console App（整合度較高） |
+| 檔案伺服器（讓設備 TFTP／HTTP／FTP／SCP 抓韌體） | ✅ | —（官方規格頁未列） |
+| CDP／LLDP 鄰居辨識（這條線接在哪台交換器哪個埠） | ✅ | —（官方規格頁未列） |
+| 遠端封包擷取（筆電 Wireshark 直接抓） | ✅ | —（官方規格頁未列） |
+| 企業集中管理／雲端隧道 | —（無此功能） | ✅ Enterprise Server（需另購授權） |
+| 電池 | 內建 5200mAh 鋰電池（續航實測值待公布） | Standard 標稱 4 小時；XL 標稱 12 小時 |
+| 韌體 | **開源（GPL 合規），可自行編譯、稽核、客製** | 封閉 |
+
+> ※ 原廠價格查自 [get-console.com 商店頁](https://www.get-console.com/shop/en/27-airconsole)（2026-08 查閱，
+> LE 款 US$69 有標價，其餘型號官網未標；XL US$139 出自
+> [2017 年第三方評測](https://blog.michaelfmcnamara.com/2017/03/airconsole-portable-serial-ethernetwifibluetooth-console-server/)）。
+> 「—（官方規格頁未列）」表示原廠公開頁面查不到該功能，不代表確定沒有。
+> 原廠的強項在 iOS 原廠 App 與企業集中管理；AirTTY 的強項在**價格、雙埠、免安裝的瀏覽器藍牙路徑，
+> 與完整的現場工具箱（檔案伺服器／LLDP／封包擷取）**。
 
 ---
 
