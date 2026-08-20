@@ -245,8 +245,8 @@ function ctrlByte(ch) {
 		flash(btnBreak);
 		/* 手機看不到 tooltip → 用提示浮條講原因,而不是做成按了沒反應的死鈕 */
 		if (!BREAK_SUPPORTED) {
-			toast('Break 需要韌體 v1.2 以上。目前請改用管理介面的網頁終端，' +
-				'或用支援 RFC 2217 的軟體連 4001 埠', 'warn');
+			toast('藍牙路徑尚未支援 Break（獨立控制通道規劃中）。' +
+				'請改用管理介面的網頁終端（可送 BREAK），或用支援 RFC 2217 的軟體連 4001 埠', 'warn');
 			return;
 		}
 		if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }

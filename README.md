@@ -49,7 +49,8 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 
 **五種連進 console 的方式，全部由同一組連線密碼把關，挑一條順手的即可：**
 
-- **網頁終端** —— 連上裝置 WiFi、開瀏覽器就能用，不必安裝任何軟體。可在連線中即時改鮑率、送 BREAK、控制 DTR/RTS。
+- **網頁終端** —— 連上裝置 WiFi、開瀏覽器就能用，不必安裝任何軟體。可在連線中即時改鮑率、送 BREAK、
+  控制 DTR/RTS；內建快捷鍵列（Tab／Esc／Ctrl 組合／方向鍵一按即送）與**終端輸出下載**（濾碼純文字，排障留檔用）。
 - **Telnet / Raw TCP** —— 沿用你原本的 PuTTY、SecureCRT、Tera Term 或 `nc`；支援 RFC2217（telnet com-port）虛擬 COM 埠。
 - **網頁藍牙終端（BLE）** —— 用 Chrome 或 Edge 開一個網頁就連得上，**不必切換 WiFi、不必配對**：[開啟網頁終端](https://airtty.github.io/webterm/)
 - **iPhone / iPad** —— 透過 BLE 搭配 App Store 上的終端 App，現場只帶手機也能進 console。
