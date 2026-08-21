@@ -7,7 +7,7 @@
 > 語言：繁體中文
 
 > ℹ️ **關於名稱**：AirTTY A1 是本產品的對外型號。裝置的 **WiFi 名稱與藍牙名稱都是 `AirTTY-A1-xxxx`**（`xxxx` 為每台不同的識別碼），管理介面左側選單也是 **「AirTTY」**。
-> **但系統內部仍沿用開發代號 AirConsole** —— SSH 登入後的服務名稱、設定檔路徑（`/etc/config/airconsole`）、系統記錄（log）標籤等技術性畫面仍會出現 AirConsole 字樣。兩者是同一台機器，看到 AirConsole 屬正常。
+> 系統內部（服務名稱、設定檔路徑 `/etc/config/airtty`、系統記錄標籤、管理頁網址 `…/admin/airtty/…`）自韌體 **v1.3.0** 起同樣全面使用 AirTTY，內外一致。更早版本的機器套用官方升級檔後會自動完成改名遷移。
 
 ---
 
