@@ -498,7 +498,8 @@ AirTTY A1 只有一張無線網卡，同時要發自己的 WiFi、又要去連�
 
 AirTTY 的功能更新以「單一升級檔」發布（檔名如 `airtty-update-v1.4.0.run`）。更新步驟：
 
-1. 從官方通路取得升級檔，存到你的電腦。
+1. 到官方發行頁 **<https://github.com/AirTTY/airtty.github.io/releases/latest>** 下載最新的
+   `airtty-update-vX.Y.Z.run`，存到你的電腦（頁面同時有該版的更新說明）。
 2. 登入管理介面，進 **AirTTY → 儀表板**，找到「**軟體更新**」區塊。
 3. 按 **「📦 上傳升級檔並更新」**，選擇 `.run` 檔，確認後裝置會自動完成更新
    （約 10～30 秒，期間終端連線會短暫斷開）。
