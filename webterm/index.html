@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AirTTY 網頁藍牙終端</title>
 <link rel="stylesheet" href="xterm.css">
+<!-- PWA:加到主畫面後可離線開啟。離線能力是 BLE 路徑的前提,不是效能優化 ——
+     Web Bluetooth 只在 secure context 可用,裝置端架不出可信 HTTPS,
+     所以本頁託管於 GitHub Pages;機房沒外網時靠 Service Worker 快取撐起同一個 origin。 -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#16161a">
+<!-- 標準版(Chrome/Android);Chrome 會對只有 apple- 前綴的舊寫法發棄用警告 -->
+<meta name="mobile-web-app-capable" content="yes">
+<!-- iOS 不吃 manifest 的 display/icons,舊前綴仍要保留(Safari 只認這個) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="AirTTY">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
 /* 自包含深色版面：本頁託管於靜態 HTTPS，不依賴裝置端的任何樣式 */
 :root {
@@ -97,6 +109,17 @@ button.active { background: #1c4e8a; border-color: #2a6cb8; }
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 #toast.warn { border-color: var(--warn); color: #ffd9a0; }
+/* PWA 更新提示：獨立元素，不共用 #toast —— 後者 pointer-events:none 點不到，
+   且 app.js 的 toast() 有 2.6s 自動清除，兩邊會互相蓋掉。這條要能點、要留著。 */
+#pwaUpdate {
+	position: fixed; left: 50%; bottom: 1.4em; z-index: 21;
+	transform: translateX(-50%);
+	max-width: 92vw; padding: .6em 1.1em; border-radius: 8px;
+	background: #2a3a4f; color: var(--fg); border: 1px solid var(--accent);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, .5);
+	font-size: .95em; cursor: pointer; display: none;
+}
+#pwaUpdate.show { display: block; }
 .grp {
 	display: flex; align-items: center; gap: .2em;
 	border: 1px solid var(--border); border-radius: 6px; padding: 0 .25em;
@@ -179,7 +202,52 @@ a { color: var(--accent); }
 
 <div id="term"></div>
 <div id="toast" role="status" aria-live="polite"></div>
+<div id="pwaUpdate" role="status">↻ 有新版本 —— 點這裡重新整理套用</div>
 <script src="xterm.js"></script>
 <script src="app.js"></script>
+<script>
+/* Service Worker 註冊 —— 離線可用的唯一開關(詳見 sw.js 檔頭)。
+ * ⚠️ 刻意不自動套用新版:使用者可能正在終端裡打字,半路換版會斷連線。
+ *    偵測到新版只提示,按了才 reload。 */
+if ('serviceWorker' in navigator) {
+	window.addEventListener('load', function () {
+		navigator.serviceWorker.register('sw.js').then(function (reg) {
+			reg.addEventListener('updatefound', function () {
+				var nw = reg.installing;
+				if (!nw) return;
+				nw.addEventListener('statechange', function () {
+					/* 有舊 controller 才算「更新」;第一次安裝不必提示 */
+					if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+						var t = document.getElementById('pwaUpdate');
+						if (!t) return;
+						t.classList.add('show');
+						t.onclick = function () {
+							t.textContent = '↻ 套用中…';
+							/* ⚠️ 不可 postMessage 完就直接 reload —— 訊息是非同步的,
+							 * reload 會在新 SW 接手前就換頁,結果舊 SW 繼續控制:
+							 * 使用者按了「套用」卻還是舊版(2026-08-25 實測踩到)。
+							 * 正解:等 controllerchange(新 SW 真的接手)再 reload。 */
+							var done = false;
+							navigator.serviceWorker.addEventListener('controllerchange', function () {
+								if (done) return;
+								done = true;
+								location.reload();
+							}, { once: true });
+							/* 保險:訊息萬一沒送達也別讓使用者卡在「套用中」 */
+							setTimeout(function () {
+								if (!done) { done = true; location.reload(); }
+							}, 3000);
+							(reg.waiting || nw).postMessage({ type: 'SKIP_WAITING' });
+						};
+					}
+				});
+			});
+		}).catch(function (e) {
+			/* 註冊失敗不影響線上使用,只是沒有離線能力 —— 印出來便於現場排查 */
+			console.warn('[pwa] Service Worker 註冊失敗,本次無離線能力:', e);
+		});
+	});
+}
+</script>
 </body>
 </html>

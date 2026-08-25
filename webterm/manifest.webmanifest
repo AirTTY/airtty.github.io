@@ -1,0 +1,17 @@
+{
+	"name": "AirTTY 網頁藍牙終端",
+	"short_name": "AirTTY",
+	"description": "用手機／筆電的藍牙直連 AirTTY，在瀏覽器裡開序列終端。加到主畫面後可離線使用（機房沒網路也能開）。",
+	"start_url": "./",
+	"scope": "./",
+	"display": "standalone",
+	"orientation": "any",
+	"background_color": "#16161a",
+	"theme_color": "#16161a",
+	"lang": "zh-Hant-TW",
+	"icons": [
+		{ "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+		{ "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+		{ "src": "icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+	]
+}
