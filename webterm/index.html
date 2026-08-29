@@ -182,7 +182,7 @@ a { color: var(--accent); }
 		<!-- Break 是線路狀態訊號不是字元，BLE 資料流送不出去；目前韌體的 BLE 通道
 		     也沒有頻外指令機制。手機看不到 tooltip → 保持可按，按下去用提示浮條說明原因 -->
 		<button class="key unavail" tabindex="-1" id="btnBreak" aria-disabled="true"
-			title="送出序列 Break 訊號（中斷 Sun／HP 主機、進 ROM monitor）。&#10;目前韌體的藍牙通道尚無此功能，需要韌體 v1.2 以上；&#10;現在請改用網頁終端（管理介面）或 RFC2217 連 4001 埠。">Break</button>
+			title="送出序列 Break 訊號（中斷 Sun／HP 主機、進 ROM monitor）。&#10;藍牙路徑尚未支援 Break（獨立控制通道規劃中）；&#10;請改用網頁終端（管理介面，可送 BREAK）或 RFC2217 連 4001 埠。">Break</button>
 		<!-- 進階備援：上面沒列到的罕用組合（Ctrl+X、Ctrl+R…）才需要用到 -->
 		<button class="key" tabindex="-1" id="btnCtrl" aria-pressed="false"
 			title="進階：按一下之後再敲一個鍵，該鍵會以 Ctrl+它送出（給上面沒列到的罕用組合用）">Ctrl+…</button>
