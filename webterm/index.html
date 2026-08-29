@@ -148,9 +148,11 @@ a { color: var(--accent); }
 		title="顯示／隱藏快捷鍵列">⌨ 快捷鍵</button>
 </header>
 <div id="hints">
-	掃描清單裡本裝置顯示為<strong>無名裝置</strong>（「Unknown or Unsupported Device」）是正常的
-	—— BLE 廣播放不下名稱；靠近一點依訊號強度判斷，連上後名稱才會出現
-	（連上後顯示的裝置名稱為 <code>AirTTY-A1-xxxx</code>，<code>xxxx</code> 是每台不同的識別碼）。
+	韌體 <strong>v1.7</strong> 起，掃描清單裡本裝置直接顯示為 <code>AirTTY-A1-xxxx</code>
+	（<code>xxxx</code> 是每台不同的識別碼）—— 找 <code>AirTTY-</code> 開頭的裝置即可。
+	<strong>較舊韌體</strong>的機器顯示為<strong>無名裝置</strong>（「Unknown or Unsupported Device」）也是正常的
+	—— 舊版 BLE 廣播放不下名稱；清單已用 Nordic UART 服務過濾，列出來的就是本裝置，
+	多台並存時靠近一點依訊號強度判斷，連上後名稱才會出現。
 	連上後輸入裝置的<strong>連線密碼</strong>即進 console
 	—— 出廠預設密碼為 <code>AirTTY</code>（可於管理介面更改；若已更改請用新密碼）。
 	⚠️ 一次只能一個 BLE 連線；若連不上，先確認沒有其他手機／電腦連著。
