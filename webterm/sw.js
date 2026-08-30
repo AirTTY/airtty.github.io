@@ -13,7 +13,7 @@
  *    他手上,而且從伺服器端完全看不出來(你看到的是新版,他看到的是舊版)。
  *    版本號也會顯示在頁面上(app.js 讀 SW 回報的版本),方便現場對帳。
  */
-const CACHE_VERSION = 'v2';
+const CACHE_VERSION = 'v3';
 const CACHE_NAME = 'airtty-webterm-' + CACHE_VERSION;
 
 /* app shell:離線要能完整開起來的最小集合。
