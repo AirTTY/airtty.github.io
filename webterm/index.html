@@ -120,6 +120,10 @@ button.active { background: #1c4e8a; border-color: #2a6cb8; }
 	font-size: .95em; cursor: pointer; display: none;
 }
 #pwaUpdate.show { display: block; }
+/* 連結要看得出來能單獨點,而且點它不會觸發整條的「套用新版」(見頁尾 script) */
+#pwaUpdate a { text-decoration: underline; white-space: nowrap; }
+/* 說明區最後一行的版本標記：暗色、等寬，跟旁邊的連結區分開 */
+#swVer { color: var(--dim); font-family: ui-monospace, Menlo, Consolas, monospace; }
 .grp {
 	display: flex; align-items: center; gap: .2em;
 	border: 1px solid var(--border); border-radius: 6px; padding: 0 .25em;
@@ -285,7 +289,18 @@ a { color: var(--accent); }
 	<br>手機沒有 Tab／Esc／Ctrl／方向鍵 —— 請用上方的 <strong>⌨ 快捷鍵</strong>列。
 	本頁需要 Chrome 或 Edge（Safari 不支援網頁藍牙，iPhone／iPad 請改用手冊介紹的 App）。
 	使用說明與離線自架方法見
-	<a href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/README.md">本頁說明文件</a>。
+	<a href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/README.md"
+		target="_blank" rel="noopener noreferrer">本頁說明文件</a>。
+	<!-- ⚠️ 這三個連結一律 target="_blank"：本頁可能正連著設備，
+	     在同一個分頁跳走等於直接斷線（BLE 連線活在這個分頁的記憶體裡，回上一頁救不回來）。 -->
+	<br><span id="swVer" title="目前正在控制這個分頁的版本。按下「↻ 有新版本」套用後才會變成最新版">webterm —</span>
+	·
+	<a href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/CHANGELOG.md"
+		target="_blank" rel="noopener noreferrer">變更紀錄</a>
+	·
+	<a href="https://github.com/AirTTY/airtty.github.io/issues"
+		target="_blank" rel="noopener noreferrer">回報問題</a>（GitHub Issues，需 GitHub 帳號；
+	<strong>截圖前請先遮掉密碼與內網 IP</strong>）
 </div>
 
 <!-- 快捷鍵列：data-seq 是要送出的位元組（16 進位），由 app.js 統一解析後走既有的寫入佇列。
@@ -484,10 +499,19 @@ a { color: var(--accent); }
 	</div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
-<div id="pwaUpdate" role="status">↻ 有新版本 —— 點這裡重新整理套用</div>
+<div id="pwaUpdate" role="status">↻ 有新版本 —— 點這裡重新整理套用
+	<a id="pwaChangelog" href="https://github.com/AirTTY/airtty.github.io/blob/main/webterm/CHANGELOG.md"
+		target="_blank" rel="noopener noreferrer">看看改了什麼</a></div>
 <script src="xterm.js"></script>
 <script src="app.js"></script>
 <script>
+/* 更新提示條裡的「看看改了什麼」——整條 #pwaUpdate 都綁著「套用新版」的 click,
+ * 連結若讓事件冒泡上去,使用者只是想先看變更紀錄卻會被就地換版、斷掉連線。 */
+(function () {
+	var chg = document.getElementById('pwaChangelog');
+	if (chg) chg.addEventListener('click', function (e) { e.stopPropagation(); });
+})();
+
 /* Service Worker 註冊 —— 離線可用的唯一開關(詳見 sw.js 檔頭)。
  * ⚠️ 刻意不自動套用新版:使用者可能正在終端裡打字,半路換版會斷連線。
  *    偵測到新版只提示,按了才 reload。 */

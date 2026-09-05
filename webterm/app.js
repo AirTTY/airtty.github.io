@@ -1326,6 +1326,38 @@ $('aiCopy').addEventListener('click', function() {
 	});
 });
 
+/* ── 頁面版本標記 ──
+ * 現場對帳用:使用者回報「這個 bug 還在」時,第一個要問的就是「你手上跑的是哪一版」。
+ * Service Worker 是 cache-first,已裝機的手機可能停在好幾版之前而完全看不出來
+ * (伺服器上是新的,他的瀏覽器拿的是快取)—— 所以版本號必須由 **SW 自己回報**,
+ * 不能寫死在 index.html:寫死的話印出來的是「這份 HTML 宣稱的版本」,
+ * 而那份 HTML 本身就可能是快取裡的舊檔,等於自己證明自己,對帳價值為零。
+ *
+ * ⚠️ 這裡顯示的是「**目前正在控制這個分頁**的 SW 版本」,不是伺服器上的最新版。
+ *    新版已下載但使用者還沒按「↻ 有新版本」時,這裡照樣顯示舊版 —— 這是對的,
+ *    正在跑的就是舊版。
+ *
+ * 取不到就維持 index.html 預填的「—」:不支援 SW 的瀏覽器、離線自架時沒註冊成功、
+ * 或 file:// 開啟,都會走到這裡,一律安靜降級,不丟錯、不影響終端功能。 */
+(function reportVersion() {
+	var el = document.getElementById('swVer');
+	if (!el || !('serviceWorker' in navigator)) return;
+
+	/* 先掛監聽再問 —— 反過來的話,SW 回得比監聽掛上還快時訊息會掉在地上 */
+	navigator.serviceWorker.addEventListener('message', function(ev) {
+		if (ev.data && ev.data.type === 'VERSION' && ev.data.version) {
+			el.textContent = 'webterm ' + ev.data.version;
+		}
+	});
+
+	/* 用 ready 而不是 controller:首次載入(SW 剛裝好還沒接管)時 controller 是 null,
+	 * 但 ready 一定給得到 active 的 registration。註冊失敗時 ready 永不 resolve
+	 * → 停在「—」,正是要的行為,不必再補 timeout。 */
+	navigator.serviceWorker.ready.then(function(reg) {
+		if (reg && reg.active) reg.active.postMessage({ type: 'GET_VERSION' });
+	}).catch(function() { /* 沒有離線能力而已,不影響終端 */ });
+})();
+
 /* ── 開頁自檢與初始狀態 ── */
 (function init() {
 	var savedFont = null, savedKeys = null, coarse;

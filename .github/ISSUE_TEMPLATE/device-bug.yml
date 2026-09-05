@@ -1,0 +1,112 @@
+name: 裝置本體問題
+description: 回報 AirTTY 機器的問題（管理介面、Telnet、序列埠、藍牙、燈號、電池、上游 WiFi）
+title: "[device] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報。填之前先看使用手冊的 §7 疑難排解 FAQ：
+        <https://github.com/AirTTY/airtty.github.io/blob/main/docs/manual-a1.md>
+
+        🔒 **這張 issue 是公開的，任何人都看得到，編輯後舊內容仍可能留存。**
+        送出前請先遮掉：**連線密碼、管理密碼、WiFi 密碼、內網 IP 與 MAC 位址、
+        設備主機名稱、SNMP community**。截圖與貼上的 log 同樣要遮。
+
+  - type: input
+    id: firmware
+    attributes:
+      label: 韌體版本
+      description: >-
+        管理介面**儀表板頁首**看得到；也可以用 SSH／裝置 Shell 讀 `/etc/airtty/version`。
+        不確定就寫「不確定」，不要用猜的。
+      placeholder: 例：AirTTY v1.7.0
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: access-path
+    attributes:
+      label: 你是用哪一種方式連的（可複選）
+      description: 有試過多種、結果不同的話請全部勾起來，並在重現步驟裡說明差異。
+      options:
+        - label: 管理介面（LuCI 網頁）的網頁終端
+        - label: Telnet / Raw TCP 4001（PuTTY、SecureCRT、nc 等）
+        - label: 藍牙 BLE —— 網頁藍牙終端 webterm
+        - label: 傳統藍牙 SPP + PuTTY（Windows）
+        - label: SSH 直連
+        - label: iPhone／iPad 的 BTerm App
+    validations:
+      required: false
+
+  - type: input
+    id: serial-adapter
+    attributes:
+      label: 序列轉接頭的廠牌與型號
+      description: >-
+        序列埠相關的問題請務必填。管理介面的儀表板「序列裝置」卡片會顯示晶片型號，
+        看不到的話寫線材外殼上的字樣。與序列埠無關的問題可留空。
+      placeholder: 例：FTDI FT232RL / UGREEN CM006；或「儀表板顯示 cp210x」
+    validations:
+      required: false
+
+  - type: input
+    id: target-device
+    attributes:
+      label: 接的是什麼設備、序列參數設多少
+      description: 對方設備的廠牌型號與鮑率／資料位元／同位／停止位元。
+      placeholder: 例：Cisco C9200 / 9600 8N1
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟
+      description: 你按了什麼、順序如何。一步一行。
+      placeholder: |
+        1. 開機，等藍燈恆亮
+        2. 手機連上 AirTTY-A1-xxxx 的 WiFi
+        3. 瀏覽器開管理介面，進儀表板
+        4. ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: 預期是什麼、實際變成什麼
+      placeholder: |
+        預期：序列裝置卡片列出接上的轉接頭
+        實際：卡片顯示「未偵測到序列裝置」，但同一條線接電腦是好的
+    validations:
+      required: true
+
+  - type: textarea
+    id: logread
+    attributes:
+      label: 系統記錄片段（`logread`）
+      description: >-
+        SSH 進裝置後執行 `logread | tail -100`（只看本專案的訊息可用
+        `logread | grep -i airtty | tail -50`），把出問題前後的段落貼上來。
+        🔒 **貼之前請遮掉 IP、MAC 與任何密碼字串。**
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截圖（可選）
+      description: >-
+        圖片直接拖進這個框即可。燈號問題請拍實體照片並說明是哪一顆燈。
+        🔒 **上傳前請先遮掉密碼與內網 IP。**
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy-ack
+    attributes:
+      label: 送出前確認
+      options:
+        - label: 我已檢查過上面填的內容、log 與截圖，沒有密碼、內網 IP、MAC 位址等不該公開的資訊。
+          required: true

@@ -1,0 +1,114 @@
+name: 網頁藍牙終端（webterm）問題
+description: 回報 https://airtty.github.io/webterm/ 這個網頁本身的問題（連不上、按鈕沒反應、畫面跑版、離線打不開）
+title: "[webterm] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報。填之前先看兩件事：
+
+        - 說明文件的「已知行為與疑難排解」與「遇到問題怎麼回報」：
+          <https://github.com/AirTTY/airtty.github.io/blob/main/webterm/README.md>
+        - 以下是**已知的預期行為，不必回報**：Safari／iPhone 開不了、
+          **Break** 按鈕是暗的、舊韌體的裝置在掃描清單顯示為無名裝置、
+          兩人同看時其中一人不能打字、連線人數滿了掃不到裝置。
+
+        🔒 **這張 issue 是公開的，任何人都看得到，編輯後舊內容仍可能留存。**
+        送出前請先遮掉：**連線密碼、管理密碼、WiFi 密碼、內網 IP 與 MAC 位址、
+        設備主機名稱、SNMP community**。截圖同樣要遮。
+
+  - type: input
+    id: webterm-version
+    attributes:
+      label: 本頁版本
+      description: >-
+        看畫面**上方說明區的最後一行**，例如 `webterm v6`。
+        這一項很關鍵 —— 本頁會離線快取，你手上跑的常常不是伺服器上最新的那一版。
+        顯示為 `—` 就照實填「顯示 —」。
+      placeholder: webterm v6
+    validations:
+      required: true
+
+  - type: input
+    id: browser
+    attributes:
+      label: 手機／電腦與瀏覽器版本
+      description: 型號 + 作業系統 + 瀏覽器與版本號。不確定版本號可在瀏覽器的「關於」頁看到。
+      placeholder: 例：Pixel 7 / Android 14 / Chrome 126
+    validations:
+      required: true
+
+  - type: dropdown
+    id: launch-mode
+    attributes:
+      label: 你是怎麼開這個頁面的
+      description: 兩種方式拿到的快取版本可能不同，這一項常常就是問題原因。
+      options:
+        - 從主畫面／桌面的圖示啟動（已「加到主畫面」）
+        - 在瀏覽器裡開網址 https://airtty.github.io/webterm/
+        - 離線自架（自己起 http://localhost 伺服器）
+        - 不確定
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: 裝置韌體版本
+      description: >-
+        管理介面**儀表板頁首**看得到；也可以用 SSH／裝置 Shell 讀 `/etc/airtty/version`。
+        不確定就寫「不確定」，不要用猜的。與本頁無關的問題可留空。
+      placeholder: 例：AirTTY v1.7.0
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟
+      description: 你按了什麼、順序如何。一步一行。
+      placeholder: |
+        1. 用主畫面圖示開啟 webterm
+        2. 按「選擇裝置並連線」，選 AirTTY-A1-1a2b
+        3. 輸入連線密碼後按 Enter
+        4. ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: 預期是什麼、實際變成什麼
+      placeholder: |
+        預期：進入 console 提示字元
+        實際：停在「連線中…」約 10 秒後跳回未連線，沒有錯誤訊息
+    validations:
+      required: true
+
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截圖或畫面文字（可選）
+      description: >-
+        圖片直接拖進這個框即可。
+        🔒 **上傳前請先遮掉密碼與內網 IP** —— 貼出去之後很難真正收回。
+        要貼終端輸出的話，用本頁的 📄 維運報告並勾選「遮蔽敏感資訊」比較安全。
+    validations:
+      required: false
+
+  - type: textarea
+    id: console
+    attributes:
+      label: 瀏覽器 Console 訊息（可選，桌機才方便取得）
+      description: 按 F12 開開發者工具 → Console 分頁，把紅色的錯誤訊息貼上來。
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy-ack
+    attributes:
+      label: 送出前確認
+      options:
+        - label: 我已檢查過上面填的內容與截圖，沒有密碼、內網 IP、MAC 位址等不該公開的資訊。
+          required: true

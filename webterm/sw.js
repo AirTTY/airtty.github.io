@@ -11,9 +11,16 @@
  * ⚠️⚠️ 改動 webterm 任何檔案後,**一定要把 CACHE_VERSION 加一**。
  *    忘了加的下場:使用者的瀏覽器會永遠拿快取裡的舊版,新功能/修好的 bug 都到不了
  *    他手上,而且從伺服器端完全看不出來(你看到的是新版,他看到的是舊版)。
- *    版本號也會顯示在頁面上(app.js 讀 SW 回報的版本),方便現場對帳。
+ *    ⚠️ bump 的單位是「每一次上線」,不是「每一個分支或任務」—— 同一個分支分兩波推,
+ *    第二波也要再加一次(2026-09-05 差一步踩過)。
+ *    版本號會顯示在頁面上供現場對帳:本檔收到 `GET_VERSION` 就回一則
+ *    `{ type: 'VERSION', version: CACHE_VERSION }`,由 app.js 的 reportVersion()
+ *    印在說明區最後一行(見 index.html 的 #swVer)。⚠️ 那裡顯示的是
+ *    **目前正在控制這個分頁的 SW 版本**,不一定等於伺服器上最新的版本 ——
+ *    使用者按過「↻ 有新版本」之後才會一致,這是刻意的(半路換版會斷連線)。
+ *    每次 bump 也要在同目錄 CHANGELOG.md 補一段,使用者點得到。
  */
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = 'airtty-webterm-' + CACHE_VERSION;
 
 /* app shell:離線要能完整開起來的最小集合。
