@@ -140,6 +140,32 @@ a { color: var(--accent); }
 .krow.scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
 .krow.scroll > * { flex: 0 0 auto; }
 
+/* ── 廠牌智慧快捷鈕 ──
+ * 偵測到廠牌才出現，沒偵測到 display:none 零佔位 ——
+ * 它不是常駐排，不吃「常駐區塊最多兩排」的額度。
+ * 指令名稱本身就長（`show configuration | display set`），6 吋螢幕一定放不下
+ * → 不折行、自己橫捲，與第二排工具列同策略。 */
+#vendorRow {
+	display: none; align-items: center; gap: .35em;
+	padding: .45em .8em; background: var(--panel);
+	border-bottom: 1px solid var(--border);
+	flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin;
+}
+#vendorRow.show { display: flex; }
+#vendorRow > * { flex: 0 0 auto; }
+#vendorLabel { font-size: .85em; color: var(--dim); padding-right: .2em; }
+#vendorRow button {
+	min-height: 40px; padding: .3em .7em;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em;
+	-webkit-tap-highlight-color: transparent;
+	transition: background .08s, transform .08s;
+}
+#vendorRow button:active { background: #4a4a58; transform: scale(.95); }
+#vendorRow button.flash { background: #2a6cb8; border-color: var(--accent); }
+/* 未連線時微暗但仍可按 —— 按下去跳提示，不做沉默死鈕（同快捷鍵列的紀律） */
+#vendorRow.notlive button.vcmd { opacity: .65; }
+#vendorClose { font-family: inherit !important; color: var(--dim); min-width: 36px; }
+
 /* ── 情境橫幅 ──
  * 目前唯一的使用者是「亂碼偵測」。刻意只做一條共用橫幅、不是每個情境一排：
  * 6 吋螢幕上每多一排常駐區塊，終端就少兩行。沒有情境時 display:none，零佔位。 */
@@ -306,6 +332,14 @@ a { color: var(--accent); }
 		<button id="btnAI" tabindex="-1"
 			title="把側錄整理成可貼給 AI 的提問內容（自動遮蔽 IP／MAC／密碼），複製後到官方聊天頁貼上。本頁不代送、不存 API key">🤖 AI</button>
 	</div>
+</div>
+
+<!-- 廠牌智慧快捷鈕：偵測到廠牌才出現，按鈕由 app.js 依 VENDORS 表產生。
+     刻意不寫死在 HTML（不像上面的快捷鍵列用 data-seq）—— 這排的內容隨偵測結果變，
+     而且送的是「整行指令 + Enter」不是控制碼，兩者性質不同。 -->
+<div id="vendorRow" role="group" aria-label="廠牌常用指令">
+	<span id="vendorLabel"></span>
+	<button id="vendorClose" tabindex="-1" aria-label="關閉廠牌快捷鈕" title="關閉這排（本次連線不再顯示）">✕</button>
 </div>
 
 <!-- 情境橫幅：同時只顯示一條，沒有情境時零佔位。目前唯一使用者是亂碼偵測 -->

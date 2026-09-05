@@ -266,7 +266,7 @@ grep -riE "fetch\(|XMLHttpRequest|WebSocket|sendBeacon|src=\"http" .
 | 檔案 | 說明 | 授權 |
 | --- | --- | --- |
 | `index.html` | 版面、快捷鍵列（送出的位元組寫在按鈕的 `data-seq`，便於稽核）與自包含深色樣式 | MIT |
-| `app.js` | Web Bluetooth 連線邏輯、快捷鍵、貼上、字級、側錄，以及 🔎 Log 檢視器／搜尋定位／⏱ 時間軸回放／📄 維運報告／亂碼偵測／🤖 AI 排障（官方聊天頁模式） | MIT |
+| `app.js` | Web Bluetooth 連線邏輯、快捷鍵、貼上、字級、側錄，以及 🔎 Log 檢視器／搜尋定位／⏱ 時間軸回放／📄 維運報告／廠牌智慧快捷鈕／亂碼偵測／🤖 AI 排障（官方聊天頁模式） | MIT |
 | `xterm.js` / `xterm.css` | 終端機模擬函式庫（[xterm.js](https://github.com/xtermjs/xterm.js)） | MIT（第三方） |
 | `sw.js` | Service Worker：離線快取（讓機房沒網路也能開） | MIT |
 | `manifest.webmanifest` / `icon-*.png` | PWA 描述檔與圖示（加到主畫面用） | MIT |

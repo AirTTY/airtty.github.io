@@ -107,6 +107,9 @@ var btnAI = document.getElementById('btnAI');
 
 var elBanner = document.getElementById('ctxBanner');
 var elBannerText = document.getElementById('ctxText');
+var elVendorRow = document.getElementById('vendorRow');
+var elVendorLabel = document.getElementById('vendorLabel');
+var elVendorClose = document.getElementById('vendorClose');
 
 var $ = function(id) { return document.getElementById(id); };
 
@@ -233,6 +236,7 @@ function hexToBytes(hex) {
  * 改成:保持可按、視覺微暗,按下去用提示浮條講清楚原因。*/
 function setKeysLive(live) {
 	elToolbar.classList.toggle('notlive', !live);
+	elVendorRow.classList.toggle('notlive', !live);
 	if (!live) setCtrlArmed(false);
 }
 
@@ -460,8 +464,29 @@ function logSince(mark) {
 	return toPlainText(new TextDecoder().decode(logMerged().slice(logBytes - take)));
 }
 
-/* ── 串流感知:警示關鍵字計數 + 亂碼偵測 ────────────────────────────────
- * 兩者都吃 logAppend 解出來的同一份文字,不額外掃第二遍。 */
+/* ── 串流感知:警示關鍵字計數 + 亂碼偵測 + 廠牌辨識 ──────────────────────
+ * 三者都吃 logAppend 解出來的同一份文字,不額外掃第二遍。 */
+
+/* ── 廠牌資料表 ────────────────────────────────────────────────────────
+ * **單一來源餵兩個功能**(照搬管理介面網頁終端的架構):
+ *   ① 廠牌智慧快捷鈕 —— 偵測到誰,就給誰的常用巡檢指令
+ *   ② 亂碼偵測的提示文字 —— 借 baud 欄講「這家 console 預設多半是多少」
+ * ⚠️ 與管理介面版(`terminal.js` 的 `VENDORS`)**逐字同步**,改一邊要改兩邊。
+ * ⚠️ `baud` 在本頁**只是提示文字** —— BLE 沒有 RFC 2217,本頁沒有換鮑率的能力,
+ *    所以不做成按鈕(那是管理介面「亂碼急救」才有的東西,見 showGarbleHint)。
+ * 手冊 §4.5「廠牌預設值表」與本表人工同步。 */
+var VENDORS = [
+	{ key: 'cisco', name: 'Cisco IOS', kw: /cisco|IOS Software|ROMMON/i, baud: '9600',
+		cmds: [ 'terminal length 0', 'show ip interface brief', 'show logging', 'show running-config', 'show version' ] },
+	{ key: 'junos', name: 'Juniper Junos', kw: /JUNOS|[Jj]uniper/, baud: '9600',
+		cmds: [ 'set cli screen-length 0', 'show interfaces terse', 'show log messages | last 50', 'show configuration | display set' ] },
+	{ key: 'fortinet', name: 'Fortinet', kw: /Forti(Gate|OS|net)|FGT[0-9-]/i, baud: '9600',
+		cmds: [ 'get system status', 'get system interface physical', 'diagnose sys top 5 20', 'show system interface' ] },
+	{ key: 'aruba', name: 'HPE/Aruba', kw: /Aruba|ProCurve|HPE? Switch/i, baud: '115200',
+		cmds: [ 'no page', 'show interfaces brief', 'show logging -r', 'show system' ] },
+	{ key: 'linux', name: 'Linux', kw: /login:|systemd|Ubuntu|Debian|CentOS|GNU\/Linux/, baud: '115200',
+		cmds: [ 'dmesg | tail -50', 'journalctl -xe --no-pager | tail -50', 'ip a', 'ip route' ] }
+];
 
 /* 警示關鍵字:網路設備 log 常見的錯誤樣式。
  * `%\w+-[0-3]-\w+` 是 Cisco 的 %FACILITY-SEVERITY-MNEMONIC —— 嚴重度只收 0-3
@@ -471,6 +496,13 @@ var LOG_ALERT_RE = /(error|fail(ed|ure)?|denied|link[- ]?down|unreachable|duplex
 
 var alertCount = 0;
 var senseTotal = 0, senseBad = 0, garbleShown = false;
+var vendorKey = null, vendorNext = 0, vendorDismissed = false, vendorBaud = null;
+/* 廠牌偵測用的滾動尾段。
+ * 管理介面那邊每 2 秒呼叫一次 `logTail(60)` —— 那會把整個側錄緩衝重新合併+解碼一遍。
+ * 手機上緩衝上限 2 MB,每 2 秒全量合併解碼是看得出來的卡頓
+ * ⇒ 改成在資料流這一側維護一段固定長度的尾巴,每塊 O(1),完全不碰主緩衝。
+ * 4000 字元 ≈ 50~80 行 console 輸出,涵蓋範圍與 logTail(60) 相當。 */
+var senseTail = '';
 
 /* 「🔎 Log」鈕上的警示徽章:有累計就掛 (N⚠),沒有就恢復乾淨字樣 */
 function updateLogBadge() {
@@ -478,7 +510,7 @@ function updateLogBadge() {
 }
 
 function senseStream(txt) {
-	var i, c, bad = 0, ls;
+	var i, c, bad = 0, ls, now;
 
 	if (!txt) return;
 	/* 亂碼:鮑率不符時解碼出大量 U+FFFD 與控制雜訊。窗口累計,比例高才提示。
@@ -505,6 +537,63 @@ function senseStream(txt) {
 	/* 只在真的變動時才寫 DOM —— BLE 通知一秒好幾十次,無條件改 textContent
 	 * 等於在資料流熱路徑上每包都做一次版面重算 */
 	if (alertCount !== c) updateLogBadge();
+
+	/* 廠牌:節流成每 2 秒掃一次尾段(關鍵字比 prompt 正則穩 —— prompt 長相
+	 * 各家都能自訂,但開機橫幅/版本字串裡的廠牌名幾乎改不掉) */
+	senseTail = (senseTail + txt).slice(-4000);
+	now = Date.now();
+	if (!vendorNext || now > vendorNext) {
+		vendorNext = now + 2000;
+		for (i = 0; i < VENDORS.length; i++) {
+			if (VENDORS[i].kw.test(senseTail)) { showVendorRow(VENDORS[i]); break; }
+		}
+	}
+}
+
+/* ── 廠牌智慧快捷鈕 ────────────────────────────────────────────────────
+ * 偵測到廠牌 → 給那家的常用巡檢指令。整排只在偵測到時出現,沒偵測到零佔位。
+ * 送的是「整行指令 + CR」不是控制碼,所以走 sendText 而不是 data-seq 那條路。
+ * 全部是唯讀查詢指令(show/get/diagnose/dmesg),不改設定 —— 這是選指令的準則,
+ * 誤按一下最多多印一頁東西,不會動到正式設備的組態。 */
+function showVendorRow(v) {
+	var i, btn;
+
+	if (vendorDismissed || vendorKey === v.key) return;
+	vendorKey = v.key;
+	vendorBaud = v.baud;   /* 餵給亂碼提示用(本頁只當文字,沒有換鮑率的能力) */
+
+	/* 重建整排:先清掉舊廠牌的按鈕,保留 label 與關閉鈕 */
+	while (elVendorRow.firstChild) elVendorRow.removeChild(elVendorRow.firstChild);
+	elVendorLabel.textContent = '偵測到 ' + v.name + ' —— 常用:';
+	elVendorRow.appendChild(elVendorLabel);
+
+	for (i = 0; i < v.cmds.length; i++) {
+		btn = document.createElement('button');
+		btn.className = 'vcmd';
+		btn.tabIndex = -1;
+		/* textContent:廠牌表是我們自己的常數,但一律不碰 innerHTML 是全頁通則 */
+		btn.textContent = v.cmds[i];
+		btn.title = '送出:' + v.cmds[i];
+		btn.addEventListener('click', function() {
+			flash(this);
+			/* 未連線不設 disabled —— 按了跳提示,不做沉默死鈕(同快捷鍵列紀律) */
+			if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
+			if (ctrlArmed) setCtrlArmed(false);
+			sendText(this.textContent + '\r');
+			toast('已送出:' + this.textContent);
+			term.focus();
+		});
+		elVendorRow.appendChild(btn);
+	}
+	elVendorRow.appendChild(elVendorClose);
+	elVendorRow.classList.add('show');
+	elVendorRow.classList.toggle('notlive', !rxChar);
+	setTimeout(fitRows, 0);   /* 多一排 → 終端列數要重算 */
+}
+
+function hideVendorRow() {
+	elVendorRow.classList.remove('show');
+	setTimeout(fitRows, 0);
 }
 
 /* ── 亂碼偵測(不是「亂碼急救」)────────────────────────────────────────
@@ -516,9 +605,21 @@ function senseStream(txt) {
 function showGarbleHint() {
 	if (garbleShown) return;
 	garbleShown = true;   /* 本次連線只提示一次,不當跳針保姆 */
-	showBanner('⚠️ 輸出像亂碼 —— 最常見原因是鮑率不符（設備常見 9600 或 115200）。' +
-		'藍牙這條路沒有控制通道，改鮑率請到裝置的管理介面「網頁終端」頁，' +
+	/* 廠牌表的第二個消費者:偵測得到廠牌就講那家的預設值,講不出來才給通則。
+	 * (亂碼時廠牌多半偵測不到 —— 字都解不開了 —— 但半糊半清的情況確實會發生) */
+	showBanner('⚠️ 輸出像亂碼 —— 最常見原因是鮑率不符（' +
+		(vendorBaud ? '偵測到的設備看起來是 ' + vendorName() + '，其 console 預設多為 ' +
+			vendorBaud : '設備常見 9600 或 115200') +
+		'）。藍牙這條路沒有控制通道，改鮑率請到裝置的管理介面「網頁終端」頁，' +
 		'或用支援 RFC 2217 的軟體連 4001 埠。');
+}
+
+function vendorName() {
+	var i;
+
+	for (i = 0; i < VENDORS.length; i++)
+		if (VENDORS[i].key === vendorKey) return VENDORS[i].name;
+	return '';
 }
 
 /* 純文字化:拿掉終端控制碼,讓紀錄檔用一般文字編輯器就看得懂。
@@ -805,6 +906,14 @@ function showBanner(text) {
 $('ctxClose').addEventListener('click', function() {
 	elBanner.classList.remove('show');
 	setTimeout(fitRows, 0);
+});
+
+/* 關掉廠牌快捷鈕:本次連線不再自動跳出來(偵測到別家也不跳)——
+ * 使用者已經表達「不想要這排」,再自己冒出來就是煩人。重新整理頁面即復原。 */
+elVendorClose.addEventListener('click', function() {
+	vendorDismissed = true;
+	hideVendorRow();
+	toast('已關閉廠牌快捷鈕（重新整理頁面可復原）');
 });
 
 /* ══ Log 檢視器 ════════════════════════════════════════════════════════
