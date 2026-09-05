@@ -279,7 +279,7 @@ function sendText(text) {
 var ctlPending = [];    /* [{cmd, resolve, timer}];逐 cmd FIFO 配對 */
 
 function ctlStatusText(st, actual) {
-	if (st === 0) return actual === null ? '已生效' : '已生效:' + actual;
+	if (st === 0) return actual === null ? '已生效' : '已生效，目前是 ' + actual;
 	if (st === 1) return '尚未生效 —— 請先在終端輸入連線密碼完成登入';
 	if (st === 2) return '送出了但沒有生效 —— 可能另一位使用者持有寫入權（你目前是唯讀）';
 	return '裝置不接受這個設定值';
