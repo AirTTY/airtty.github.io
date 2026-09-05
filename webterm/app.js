@@ -749,6 +749,14 @@ function sheetShow(el, on) {
 }
 
 function sheetPush(el) {
+	/* ⚠️ 先把焦點從終端拿走,再顯示面板。
+	 * xterm 的隱藏 textarea 會一直握著焦點,面板蓋上去也不會自動放開 ⇒
+	 * 使用者在面板裡敲的每一個鍵(含 Esc)都會先被 xterm 收走、**送到連線中的設備**。
+	 * 對正式網路設備亂送位元組是會出事的,與「多行貼上先確認」同一條紀律。
+	 * 這裡只 blur 不 focus 任何輸入框 —— 手機上自動 focus 會立刻彈出軟體鍵盤
+	 * 蓋掉半個面板,使用者還沒看到內容就得先把鍵盤收起來。 */
+	if (document.activeElement && document.activeElement.blur)
+		document.activeElement.blur();
 	if (sheetStack.length) sheetShow(sheetStack[sheetStack.length - 1], false);
 	sheetStack.push(el);
 	sheetShow(el, true);
@@ -1156,7 +1164,8 @@ var aiCtxMark = 0;
 function openAI() {
 	flash(btnAI);
 	sheetPush(shAI);
-	aiQ.focus();
+	/* 不自動 focus 問題框:手機上會立刻彈出軟體鍵盤蓋掉半個面板,
+	 * 使用者連上面那段「本頁不會幫你送出」的說明都還沒看到。 */
 }
 
 btnAI.addEventListener('click', openAI);
