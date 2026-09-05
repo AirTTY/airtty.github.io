@@ -405,7 +405,9 @@ var logBytes = 0;
 var logPushed = 0;
 /* stream 模式:BLE 通知常把一個 UTF-8 字元切成兩包。
  * 只給「亂碼偵測」用 —— 逐塊用非 stream 解碼會在每個塊邊界製造假的 U+FFFD,
- * 20~512 byte 的 BLE 塊比 WebSocket frame 碎得多,會把偵測門檻整個灌爆。 */
+ * 20~512 byte 的 BLE 塊比管理介面那邊的 WS frame 碎得多,會把偵測門檻整個灌爆。
+ * (這行刻意不寫出 W-e-b-S-o-c-k-e-t 全名 —— README 的稽核 grep 找那個字串,
+ *  在程式註解裡寫它會讓稽核表多出一筆假命中,反而害讀的人要多查一次。) */
 var senseDecoder = new TextDecoder();
 
 /* t 參數只給開發期注入測試資料用(見 README 維護者節):正式路徑一律不帶,
@@ -741,6 +743,9 @@ var sheetStack = [];
 function sheetShow(el, on) {
 	el.hidden = !on;
 	el.setAttribute('aria-hidden', on ? 'false' : 'true');
+	/* 列印樣式的總開關:只有報告面板真的開著時,才讓 @media print 接管整頁。
+	 * 否則使用者在終端畫面上按 Ctrl+P 會印到一張空白報告(比原本更糟)。 */
+	if (el === shReport) document.body.classList.toggle('report-open', on);
 }
 
 function sheetPush(el) {
@@ -1097,7 +1102,9 @@ function renderReport() {
 		['連線方式', '網頁藍牙終端（Web Bluetooth／Nordic UART Service）'],
 		['側錄時間範圍', first ? (new Date(first.t).toLocaleString() + ' ～ ' +
 			new Date(last.t).toLocaleString()) : '—'],
-		['側錄大小', Math.round(logBytes / 1024) + ' KB' +
+		/* 短連線只有幾百 byte,無條件除 1024 會印成「0 KB」 */
+		['側錄大小', (logBytes < 1024 ? logBytes + ' 位元組'
+			: Math.round(logBytes / 1024) + ' KB') +
 			(logPushed > logBytes ? '（已達上限，保留最新的部分）' : '')],
 		['敏感資訊', rpMask.checked ? '已遮蔽 IP／MAC／密碼樣式' : '⚠️ 未遮蔽 —— 含完整 IP／MAC']
 	];

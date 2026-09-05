@@ -149,8 +149,10 @@ HTTP 伺服器就能用，完全不依賴網際網路。
 
 **步驟：**
 
-1. 下載本目錄的四個檔案（`index.html`、`app.js`、`xterm.js`、`xterm.css`），
-   放進同一個資料夾。整個 repo 直接 `git clone` 或下載 ZIP 也可以。
+1. 下載本目錄的四個必要檔案（`index.html`、`app.js`、`xterm.js`、`xterm.css`），
+   放進同一個資料夾。整個 repo 直接 `git clone` 或下載 ZIP 也可以（建議這樣做，
+   會一併帶到 `sw.js` 與 `manifest.webmanifest`／圖示 —— 那幾個檔案讓自架的版本
+   也能「加到主畫面」與離線開啟；少了它們核心的終端功能一樣完整，只是沒有 PWA 能力）。
 2. 在該資料夾開啟終端機，執行：
 
    ```
@@ -264,7 +266,7 @@ grep -riE "fetch\(|XMLHttpRequest|WebSocket|sendBeacon|src=\"http" .
 | 檔案 | 說明 | 授權 |
 | --- | --- | --- |
 | `index.html` | 版面、快捷鍵列（送出的位元組寫在按鈕的 `data-seq`，便於稽核）與自包含深色樣式 | MIT |
-| `app.js` | Web Bluetooth 連線邏輯、快捷鍵、貼上、字級、連線紀錄 | MIT |
+| `app.js` | Web Bluetooth 連線邏輯、快捷鍵、貼上、字級、側錄，以及 🔎 Log 檢視器／搜尋定位／⏱ 時間軸回放／📄 維運報告／亂碼偵測／🤖 AI 排障（官方聊天頁模式） | MIT |
 | `xterm.js` / `xterm.css` | 終端機模擬函式庫（[xterm.js](https://github.com/xtermjs/xterm.js)） | MIT（第三方） |
 | `sw.js` | Service Worker：離線快取（讓機房沒網路也能開） | MIT |
 | `manifest.webmanifest` / `icon-*.png` | PWA 描述檔與圖示（加到主畫面用） | MIT |
@@ -272,3 +274,22 @@ grep -riE "fetch\(|XMLHttpRequest|WebSocket|sendBeacon|src=\"http" .
 > 🛠 **維護者請注意**：改動本目錄**任何檔案**後，必須把 `sw.js` 裡的 `CACHE_VERSION` 加一。
 > 忘了加的下場是：使用者的瀏覽器永遠拿快取裡的舊版，你修好的 bug 到不了他手上，
 > 而且從伺服器端完全看不出來（你看到的是新版，他看到的是舊版）。
+> 新增檔案時還要同步 `sw.js` 的 `SHELL` 清單 —— `addAll()` 是全有全無，
+> 漏列或列錯任一個檔案，結果是**完全沒有離線能力**，而且不會有明顯的錯誤畫面。
+
+> 🧪 **開發期怎麼測 Log 檢視器／回放／報告／AI（不必有硬體）**：
+> 這幾個功能只吃「已經收到的位元組」，所以不需要真的連上裝置。
+> `app.js` 是一般的 `<script>`（非 module），最外層的函式都在 `window` 上，
+> 直接在瀏覽器 DevTools 的 Console 打就能灌假資料：
+>
+> ```js
+> const u8 = new TextEncoder().encode('Switch# show version\r\n%LINK-3-UPDOWN: Gi0/2 down\r\n');
+> term.write(u8);            // 畫到終端
+> logAppend(u8);             // 進側錄
+> logAppend(u8, Date.now() - 5000);   // 第二參數 = 自訂到達時間戳，測回放節奏用
+> ```
+>
+> `logAppend` 的第二個參數 `t` **只存在於這條路徑**：正式流程（BLE 通知）一律不帶它，
+> 由函式自己取現在時間。頁面上**沒有任何 UI、網址參數或熱鍵可以觸發它** ——
+> 它不是隱藏的開發頁，也沒有多出任何檔案要進 `SHELL`，正式站上唯一打得到它的方式
+> 就是使用者自己打開 DevTools 手動呼叫（那本來就等同於他自己在自己的瀏覽器裡貼字）。

@@ -212,15 +212,21 @@ a { color: var(--accent); }
 	white-space: pre-wrap; word-break: break-all; }
 
 /* 列印：不開新分頁、不彈視窗，直接印目前這一層。
-   （彈出視窗會被行動瀏覽器擋，PWA 獨立視窗下 Android 還會開成 Custom Tab。） */
+   （彈出視窗會被行動瀏覽器擋，PWA 獨立視窗下 Android 還會開成 Custom Tab。）
+   ⚠️ 整段一律用 body.report-open 收口：沒開報告面板時，Ctrl+P 必須維持
+   瀏覽器的預設行為（印使用者眼前的畫面）。少了這個條件，使用者在終端上
+   按列印會拿到一張空白／過期的報告 —— 那是比原本更糟的退步。 */
 @media print {
-	body > * { display: none !important; }
-	body > #sheetReport { display: block !important; position: static; background: #fff; color: #000; }
-	#sheetReport > header, #sheetReport .sheetbar, #sheetReport .noprint { display: none !important; }
-	#sheetReport .sheetbody { overflow: visible; padding: 0; }
-	#reportBody h2 { border-bottom: 1px solid #999; }
-	#reportBody td { border: 1px solid #999; }
-	#reportBody pre { background: #f6f6f6; border: 1px solid #ccc; color: #000; }
+	body.report-open > * { display: none !important; }
+	body.report-open > #sheetReport {
+		display: block !important; position: static; background: #fff; color: #000;
+	}
+	body.report-open #sheetReport > header,
+	body.report-open #sheetReport .sheetbar { display: none !important; }
+	body.report-open #sheetReport .sheetbody { overflow: visible; padding: 0; }
+	body.report-open #reportBody h2 { border-bottom: 1px solid #999; }
+	body.report-open #reportBody td { border: 1px solid #999; }
+	body.report-open #reportBody pre { background: #f6f6f6; border: 1px solid #ccc; color: #000; }
 }
 </style>
 </head>
