@@ -170,6 +170,36 @@ a { color: var(--accent); }
 #vendorRow.notlive button.vcmd { opacity: .65; }
 #vendorClose { font-family: inherit !important; color: var(--dim); min-width: 36px; }
 
+/* ── 一鍵試鮑率（亂碼橫幅的附屬排）──
+ * 與 #vendorRow 同策略：條件顯示、零佔位、不折行自己橫捲。
+ * 底色沿用橫幅那組警示色，讓人看得出這排屬於上面那條提示。 */
+#baudRow {
+	display: none; align-items: center; gap: .35em;
+	padding: .45em .8em; background: #3a2f18; color: #ffd9a0;
+	border-bottom: 1px solid var(--warn);
+	flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; font-size: .9em;
+}
+#baudRow.show { display: flex; }
+#baudRow > * { flex: 0 0 auto; }
+#baudRow button {
+	min-height: 40px; padding: .3em .7em;
+	background: transparent; border-color: rgba(255, 217, 160, .4); color: inherit;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .95em;
+	-webkit-tap-highlight-color: transparent;
+	transition: background .08s, transform .08s;
+}
+#baudRow button:active { background: #5a4a28; transform: scale(.95); }
+#baudRow button.flash { background: #2a6cb8; border-color: var(--accent); }
+
+/* ── 線路設定面板 ── */
+#sheetLine .lnrow { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .7em; }
+#sheetLine label { font-size: .9em; color: var(--dim); }
+#sheetLine input[type=number] { width: 8em; }
+#lnModem { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+#lnStat { font-size: .9em; color: var(--dim); min-height: 1.3em; display: block; }
+#lnNote { font-size: .9em; color: #ffd9a0; display: block; min-height: 1.2em; }
+#sheetLine button.armed { background: #2a6cb8; border-color: var(--accent); }
+
 /* ── 情境橫幅 ──
  * 目前唯一的使用者是「亂碼偵測」。刻意只做一條共用橫幅、不是每個情境一排：
  * 6 吋螢幕上每多一排常駐區塊，終端就少兩行。沒有情境時 display:none，零佔位。 */
@@ -283,8 +313,9 @@ a { color: var(--accent); }
 	但<strong>同時只有一人能打字</strong> —— 先連上的人持有輸入權，他離線後另一人自動接手。
 	滿兩人時裝置<strong>會停止廣播</strong>，第三台就掃不到了（這是刻意設計，不是故障）。
 	<strong>較舊韌體</strong>一次只能一人。
-	⚠️ 唯讀的人<strong>無法主動接管</strong>輸入權（藍牙這條路沒有控制通道）——
-	要拿到輸入權請改用管理介面的網頁終端，或等持有者離線自動接棒。
+	⚠️ 唯讀的人<strong>無法主動接管</strong>輸入權 —— <strong>接管刻意沒有做在藍牙這條路上</strong>
+	（搶走別人正在操作中的 console 風險太高）。要拿到輸入權請改用管理介面的網頁終端，
+	或等持有者離線自動接棒。唯讀時 <strong>⚙ 線路</strong>的設定送得出去但不會生效，畫面會明講。
 	連不上時，常見原因是<strong>已有兩人連線中</strong>、距離太遠、或裝置未開機。
 	<br>手機沒有 Tab／Esc／Ctrl／方向鍵 —— 請用上方的 <strong>⌨ 快捷鍵</strong>列。
 	本頁需要 Chrome 或 Edge（Safari 不支援網頁藍牙，iPhone／iPad 請改用手冊介紹的 App）。
@@ -322,10 +353,13 @@ a { color: var(--accent); }
 		<button class="key" tabindex="-1" data-seq="1b5b42" aria-label="下" title="↓ —— 下一筆歷史指令">↓</button>
 		<button class="key" tabindex="-1" data-seq="1b5b44" aria-label="左" title="← 游標左移">←</button>
 		<button class="key" tabindex="-1" data-seq="1b5b43" aria-label="右" title="→ 游標右移">→</button>
-		<!-- Break 是線路狀態訊號不是字元，BLE 資料流送不出去；目前韌體的 BLE 通道
-		     也沒有頻外指令機制。手機看不到 tooltip → 保持可按，按下去用提示浮條說明原因 -->
-		<button class="key unavail" tabindex="-1" id="btnBreak" aria-disabled="true"
-			title="送出序列 Break 訊號（中斷 Sun／HP 主機、進 ROM monitor）。&#10;藍牙路徑尚未支援 Break（獨立控制通道規劃中）；&#10;請改用網頁終端（管理介面，可送 BREAK）或 RFC2217 連 4001 埠。">Break</button>
+		<!-- Break 是線路狀態訊號不是字元，序列資料通道送不出去。
+		     韌體 v1.8 起裝置端多了一條**獨立的控制通道**，這顆才真的能按；
+		     舊韌體上 app.js 會把它整顆隱藏（不做半套死鈕）。
+		     初始 hidden：連上之前還不知道對方韌體有沒有，寧可不顯示也不要閃一下就消失。
+		     手機看不到 tooltip → 未就緒時按下去用提示浮條說明原因 -->
+		<button class="key unavail hidden" tabindex="-1" id="btnBreak" aria-disabled="true"
+			title="送出序列 Break 訊號（中斷 Sun／HP 主機、進 ROM monitor）。&#10;拉低 250 毫秒再放開，由裝置端計時。&#10;需先完成連線密碼登入，且你必須是目前的寫入權持有者。">Break</button>
 		<!-- 進階備援：上面沒列到的罕用組合（Ctrl+X、Ctrl+R…）才需要用到 -->
 		<button class="key" tabindex="-1" id="btnCtrl" aria-pressed="false"
 			title="進階：按一下之後再敲一個鍵，該鍵會以 Ctrl+它送出（給上面沒列到的罕用組合用）">Ctrl+…</button>
@@ -346,6 +380,10 @@ a { color: var(--accent); }
 			title="把側錄拉出來當靜態文字看：過濾、搜尋定位、只看警示行；回放與維運報告也在裡面。偵測到警示關鍵字時鈕上會出現 (N⚠)">🔎 Log</button>
 		<button id="btnAI" tabindex="-1"
 			title="把側錄整理成可貼給 AI 的提問內容（自動遮蔽 IP／MAC／密碼），複製後到官方聊天頁貼上。本頁不代送、不存 API key">🤖 AI</button>
+		<!-- 線路設定：只有偵測到裝置支援控制通道（韌體 v1.8 起）才顯示。
+		     做成抽屜而不是常駐排——版面上限是兩排，而這些是「偶爾調一次」的東西 -->
+		<button id="btnLine" tabindex="-1" class="hidden"
+			title="換鮑率、資料位元／同位／停止位元、送 Break、控 DTR／RTS、看 modem 狀態。需韌體 v1.8 以上">⚙ 線路</button>
 	</div>
 </div>
 
@@ -363,6 +401,12 @@ a { color: var(--accent); }
 	<span class="sep"></span>
 	<button id="ctxClose" tabindex="-1" aria-label="關閉提示" title="關閉提示">✕</button>
 </div>
+
+<!-- 一鍵試鮑率：亂碼橫幅的附屬排，只在「偵測到亂碼 ＋ 韌體有控制通道」時出現。
+     按鈕由 app.js 依 BAUD_TRY（＋偵測到的廠牌預設值）產生。
+     ⚠️ 刻意不自動換：亂碼只證明現在這個是錯的，不證明對的是哪一個，
+     而換鮑率會打斷連線中設備的輸出——那一下必須是人按的。 -->
+<div id="baudRow" role="group" aria-label="一鍵試鮑率"></div>
 
 <div id="term"></div>
 
@@ -496,6 +540,64 @@ a { color: var(--accent); }
 				對方頁面怎麼處理你貼的內容，適用的是<strong>對方</strong>的隱私條款。
 			</p>
 		</div>
+	</div>
+</div>
+
+<!-- ══ 線路設定（需韌體 v1.8 的控制通道）════════════════════════════════
+     這些動作**會真的改到你連著的設備**，所以：
+       ① 一律「按了才動」，面板打開不會自動套用任何東西
+       ② 每個動作都等裝置端回覆，沒生效就明說（不假裝成功）
+       ③ 設定值不記憶（關頁即消）—— 本頁的鐵律①，見 README「安全性」 -->
+<div class="sheet" id="sheetLine" hidden aria-hidden="true" role="dialog" aria-label="線路設定">
+	<header>
+		<button class="sheetback" data-close="sheetLine" title="返回終端">← 返回</button>
+		<h2>⚙ 線路設定</h2>
+		<span class="sep"></span>
+		<span id="lnModem" class="note" title="設備回報的 modem 狀態線（●＝有訊號）">DCD ○　CTS ○　DSR ○　RI ○</span>
+	</header>
+	<div class="sheetbody">
+		<span id="lnNote"></span>
+		<p class="note" style="margin:.2em 0 .9em">
+			改的是<strong>這台 AirTTY 的序列埠</strong>，不是你連著的設備本身。
+			設定只在本次連線有效，斷線就回到裝置預設值。
+		</p>
+		<div class="lnrow">
+			<label for="lnBaud">鮑率</label>
+			<input type="number" id="lnBaud" min="50" max="3000000" step="1" value="9600"
+				inputmode="numeric" placeholder="9600">
+			<label for="lnData">資料位元</label>
+			<select id="lnData">
+				<option value="8" selected>8</option>
+				<option value="7">7</option>
+				<option value="6">6</option>
+				<option value="5">5</option>
+			</select>
+			<label for="lnParity">同位</label>
+			<select id="lnParity">
+				<option value="1" selected>無</option>
+				<option value="2">奇</option>
+				<option value="3">偶</option>
+			</select>
+			<label for="lnStop">停止位元</label>
+			<select id="lnStop">
+				<option value="1" selected>1</option>
+				<option value="3">2</option>
+			</select>
+		</div>
+		<div class="lnrow">
+			<button id="lnApply" class="primary" title="把上面四個參數依序套用到序列埠">套用</button>
+			<button id="lnRead" title="向裝置問目前實際的鮑率">↻ 讀取現況</button>
+			<span class="sep"></span>
+			<button id="lnBreak" title="送出序列 Break（拉低 250 毫秒再放開，由裝置端計時）">⚡ 送 Break</button>
+			<button id="lnDTR" aria-pressed="false" title="切換 DTR 線">DTR</button>
+			<button id="lnRTS" aria-pressed="false" title="切換 RTS 線">RTS</button>
+		</div>
+		<span id="lnStat"></span>
+		<p class="note" style="margin-top:1em">
+			<strong>沒生效怎麼辦？</strong>同一台 AirTTY 同時只有一位使用者有寫入權
+			（先連上的那位）。你是唯讀的時候，這裡的設定送得出去但不會生效，
+			狀態列會明講。等對方離線後會自動交棒，或請對方到管理介面的網頁終端讓出。
+		</p>
 	</div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>

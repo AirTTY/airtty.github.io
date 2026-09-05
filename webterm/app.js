@@ -38,13 +38,26 @@
  *   （刻意設計，非故障）。
  * - 兩人**同看同一畫面**，但**同時只有一條連線有寫入權**（裝置端 wsbridge 的獨佔鎖：
  *   先連者持有，持有者離線後自動交棒給最早連上的另一條）。
- *   ⚠️ BLE 這條路**沒有控制通道** ⇒ 唯讀者**無法主動接管**，裝置端只會送中文文字行
- *   通知；接管動線只做在管理介面的網頁終端。
+ *   ⚠️ 唯讀者**無法主動接管**，裝置端只會送中文文字行通知；接管動線只做在管理介面。
+ *   ~~舊理由：「BLE 這條路沒有控制通道」~~ —— 韌體 v1.8 起**有**控制通道了（見下一條），
+ *   但**接管刻意沒放進去**：那條通道的授權是「繼承這條連線既有的權限」，
+ *   而接管的本質是「取得自己原本沒有的權限」，兩者安全模型不同，不可混在一起。
  * - 連線密碼由裝置端把關。
  * - Windows 首次 GATT 連線常失敗 → 內建重試 ×3。
  * - 重新連線必須沿用同一個 BluetoothDevice 物件，否則多台並存時會連錯機器。
- * - 裝置端的 BLE 橋接把上行資料當純位元組轉發（0xFF 會被逃逸成 IAC IAC），
- *   所以「送出序列 Break」這種頻外訊號無法從 BLE 這條路做到 → Break 鈕停用。
+ * - **序列埠控制通道:依裝置端韌體版本而異**（與名稱那條同理，公開託管什麼韌體都有）。
+ *   **韌體 v1.8 起**多兩顆特徵值（`6e400004` 寫入、`6e400005` 通知），可換鮑率、
+ *   送 Break、控 DTR／RTS、讀 modem 狀態；**v1.8 之前完全沒有**。
+ *   ⚠️ 因此探索這兩顆一律容錯（`.catch(() => null)`）：舊韌體 `getCharacteristic`
+ *   會 reject，沒接住就會讓**所有舊韌體的使用者連不上**，這是本功能最容易造成的迴歸。
+ *   找不到 → `ctlAvail=false`，整組控制功能**隱藏**（不做半套死鈕）。
+ *   ~~舊敘述：「裝置端把上行資料當純位元組轉發（0xFF 會被逃逸成 IAC IAC），
+ *   所以送出序列 Break 這種頻外訊號無法從 BLE 這條路做到 → Break 鈕停用」~~
+ *   —— 序列資料通道確實仍是如此，但控制訊號現在走**另一條特徵值**，不受影響。
+ * - 控制通道的權限**完全由裝置端把關**，本頁不做任何權限判斷：沒登入 → 回
+ *   not-ready；不是寫入權持有者 → 送出去但沒生效（回 timeout）。
+ *   ⚠️「沒生效」**不可以**顯示成成功 —— 使用者會以為換好了，然後對著還是亂碼的
+ *   畫面查半天。
  *
  * 相依：xterm.js v5.x（本目錄自帶）。用到的公開 API 僅 Terminal / write /
  * onData / focus / resize / options / element —— 已對照本目錄這份 bundle 確認。
@@ -63,13 +76,34 @@ var NUS_SVC = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 var NUS_RX  = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; /* client → 裝置 */
 var NUS_TX  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; /* 裝置 → client */
 
-/* Web Bluetooth 不揭露協商後的 MTU → 寫入用保守分塊。20 = BLE 4.0 最小
- * ATT payload,任何協商結果下都安全;打字是單鍵單 byte,只有貼上會走分塊迴圈 */
-var WRITE_CHUNK = 20;
+/* ── 控制通道(裝置端韌體 v1.8 起)──────────────────────────────────────
+ * 兩顆額外的特徵值,與序列資料**完全分流**(序列裝置的輸出因此無法偽造控制事件)。
+ * ⚠️ **舊韌體沒有這兩顆** → 探索一律容錯,拿不到就 ctlAvail=false、
+ * 整組控制功能隱藏。本頁公開託管、買家手上什麼韌體都有,不可假設一定有。
+ * 裝置端把這裡送出的小訊框翻譯成序列埠控制指令塞進既有的那條連線,
+ * 所以權限與認證**完全沿用裝置端既有那一套**:沒登入 → not-ready、
+ * 不是寫入權持有者 → 逾時未生效。本頁自己不做任何權限判斷。 */
+var CTL_RX  = '6e400004-b5a3-f393-e0a9-e50e24dcca9e'; /* 瀏覽器 → 裝置,write */
+var CTL_TX  = '6e400005-b5a3-f393-e0a9-e50e24dcca9e'; /* 裝置 → 瀏覽器,notify */
 
-/* 裝置端韌體目前沒有任何可從 BLE 觸發 Break 的頻外機制 → 恆為 false。
- * 韌體支援後把這裡改 true 並填 BREAK_SEQ 即可,其餘程式不用動。 */
+/* 控制訊框:[ver=1][cmd][len][payload…];回應 [ver][cmd|0x80][status][payload…] */
+var CTL_VER = 1;
+var C_BAUD = 0x01, C_DATA = 0x02, C_PARITY = 0x03, C_STOP = 0x04,
+	C_BREAK = 0x05, C_DTR = 0x06, C_RTS = 0x07, C_STATE = 0x10;
+var EV_MODEM = 0xa0, EV_READY = 0xa1;
+
+/* 本頁的等待上限刻意比裝置端的 1 秒**長**:這樣「沒生效」一律由裝置端回
+ * status 2 來判定,提示訊息只有一個來源;本地逾時只是連線真斷掉時的保險。 */
+var CTL_WAIT_MS = 2500;
+
+/* Break 能不能用 —— **不再是寫死的常數**(韌體 v1.7 及之前恆 false)。
+ * 改由「這台裝置有沒有控制通道 + 有沒有收到就緒事件」決定,見 setCtlReady()。 */
 var BREAK_SUPPORTED = false;
+
+/* 亂碼急救的一鍵鮑率:現場最常見的五個。**只有人按才換** ——
+ * 亂碼只證明「現在這個是錯的」,不證明「對的是哪一個」,而換鮑率會打斷
+ * 連線中設備的輸出,所以那一下必須是使用者刻意按的。 */
+var BAUD_TRY = [9600, 19200, 38400, 57600, 115200];
 
 var LS_FONT = 'airtty.webterm.fontSize';
 var LS_KEYS = 'airtty.webterm.keysOpen';
@@ -126,6 +160,13 @@ var shReport = $('sheetReport'), rpMask = $('rpMask'), reportBody = $('reportBod
 /* AI 排障 */
 var shAI = $('sheetAI'), aiQ = $('aiQ'), aiCtx = $('aiCtx'), aiMask = $('aiMask'),
 	aiPrev = $('aiPrev'), aiSendWrap = $('aiSendWrap'), aiStat = $('aiStat');
+/* 線路設定(控制通道) */
+var btnLine = $('btnLine'), shLine = $('sheetLine'),
+	lnBaud = $('lnBaud'), lnData = $('lnData'), lnParity = $('lnParity'),
+	lnStop = $('lnStop'), lnApply = $('lnApply'), lnRead = $('lnRead'),
+	lnBreak = $('lnBreak'), lnDTR = $('lnDTR'), lnRTS = $('lnRTS'),
+	lnStat = $('lnStat'), lnModem = $('lnModem'), lnNote = $('lnNote');
+var elBaudRow = $('baudRow');
 
 var term = new window.Terminal({
 	cursorBlink: true, fontSize: FONT_DEFAULT, scrollback: 5000,
@@ -136,6 +177,10 @@ term.open(elTermHost);
 var device = null;      /* 釘住的 BluetoothDevice(重連不重開 chooser) */
 var rxChar = null;      /* write 目標 */
 var txChar = null;      /* notify 來源 */
+var ctlRxChar = null;   /* 控制訊框寫入目標(舊韌體為 null) */
+var ctlTxChar = null;   /* 控制回應/事件來源 */
+var ctlAvail = false;   /* 這台裝置有控制通道(= 找得到兩顆特徵值) */
+var ctlReady = false;   /* 裝置端已回報就緒(密碼關已過、序列埠控制已備妥) */
 var wantDisconnect = false;   /* 區分「使用者按斷線」與「意外斷線」 */
 var writeQueue = Promise.resolve();  /* GATT 同時只能一個操作 → 寫入串行化 */
 var ctrlArmed = false;  /* Ctrl 修飾鍵:等待下一個鍵 */
@@ -219,6 +264,162 @@ function sendText(text) {
 	sendBytes(new TextEncoder().encode(text));
 }
 
+/* ══ 控制通道 ═══════════════════════════════════════════════════════════
+ * 送一則小訊框 → 裝置端翻成序列埠控制指令 → 回一則帶狀態的訊框。
+ *
+ * 界線提醒(與本頁三條鐵律一致):控制通道**不存任何東西**,參數刻意
+ * 不記憶(關頁即消、重連要重設)—— 記住上次的鮑率等於在第三方 origin
+ * 留下「你連的是什麼設備」的線索,而省下的只是一次點選。
+ *
+ * 狀態碼由裝置端定義,本頁只負責翻成人看得懂的話:
+ *   0 ok / 1 還沒登入 / 2 送出去了但沒生效(多半是別人持有寫入權)/ 3 參數不被接受
+ * ⚠️「沒生效」**不能**靜靜當成成功 —— 使用者會以為鮑率換了,然後對著
+ *    還是亂碼的畫面查半天。 */
+
+var ctlPending = [];    /* [{cmd, resolve, timer}];逐 cmd FIFO 配對 */
+
+function ctlStatusText(st, actual) {
+	if (st === 0) return actual === null ? '已生效' : '已生效:' + actual;
+	if (st === 1) return '尚未生效 —— 請先在終端輸入連線密碼完成登入';
+	if (st === 2) return '送出了但沒有生效 —— 可能另一位使用者持有寫入權（你目前是唯讀）';
+	return '裝置不接受這個設定值';
+}
+
+/* 送一則控制訊框,回傳 Promise<{status, payload}>。
+ * 走同一條 writeQueue:GATT 同時只允許一個操作,控制寫入與鍵盤寫入
+ * 若各排一條佇列就會互相踩到。 */
+function ctlRequest(cmd, payload) {
+	var frame, i;
+
+	if (!ctlRxChar) return Promise.reject(new Error('no-ctl'));
+	payload = payload || [];
+	frame = new Uint8Array(3 + payload.length);
+	frame[0] = CTL_VER;
+	frame[1] = cmd;
+	frame[2] = payload.length;
+	for (i = 0; i < payload.length; i++) frame[3 + i] = payload[i];
+
+	return new Promise(function(resolve, reject) {
+		var rec = { cmd: cmd, resolve: resolve, timer: 0 };
+
+		rec.timer = setTimeout(function() {
+			var k = ctlPending.indexOf(rec);
+			if (k >= 0) ctlPending.splice(k, 1);
+			reject(new Error('local-timeout'));
+		}, CTL_WAIT_MS);
+		ctlPending.push(rec);
+		writeQueue = writeQueue.then(function() {
+			if (!ctlRxChar) throw new Error('no-ctl');
+			return ctlRxChar.writeValueWithResponse
+				? ctlRxChar.writeValueWithResponse(frame)
+				: ctlRxChar.writeValue(frame);
+		}).catch(function(e) {
+			var k = ctlPending.indexOf(rec);
+			if (k >= 0) ctlPending.splice(k, 1);
+			clearTimeout(rec.timer);
+			reject(e);
+		});
+	});
+}
+
+/* 裝置 → 本頁的控制訊框。格式錯的一律忽略(控制通道出事不得波及終端資料流) */
+function onCtlFrame(u8) {
+	var cmd, st, payload, i, rec, actual;
+
+	if (!u8 || u8.length < 3 || u8[0] !== CTL_VER) return;
+	cmd = u8[1];
+	st = u8[2];
+	payload = u8.subarray(3);
+
+	if (cmd === EV_READY) { setCtlReady(true); return; }
+	if (cmd === EV_MODEM) { showModem(payload.length ? payload[0] : 0); return; }
+
+	actual = null;
+	if (payload.length === 4) {
+		actual = ((payload[0] << 24) | (payload[1] << 16) |
+			(payload[2] << 8) | payload[3]) >>> 0;
+	} else if (payload.length === 1) {
+		actual = payload[0];
+	}
+	/* 配對最舊的同 cmd 待辦(cmd|0x80 是回應標記) */
+	for (i = 0; i < ctlPending.length; i++) {
+		rec = ctlPending[i];
+		if ((rec.cmd | 0x80) !== cmd) continue;
+		ctlPending.splice(i, 1);
+		clearTimeout(rec.timer);
+		rec.resolve({ status: st, actual: actual });
+		return;
+	}
+}
+
+/* 找不到控制通道特徵值(舊韌體)→ 整組功能隱藏,不留半套死鈕 */
+function setCtlAvail(on) {
+	ctlAvail = !!on;
+	if (btnLine) btnLine.classList.toggle('hidden', !ctlAvail);
+	btnBreak.classList.toggle('hidden', !ctlAvail);
+	if (!ctlAvail) setCtlReady(false);
+}
+
+function setCtlReady(on) {
+	ctlReady = !!on;
+	BREAK_SUPPORTED = ctlAvail && ctlReady;
+	btnBreak.classList.toggle('unavail', !BREAK_SUPPORTED);
+	btnBreak.setAttribute('aria-disabled', BREAK_SUPPORTED ? 'false' : 'true');
+	if (btnLine) btnLine.classList.toggle('unavail', !ctlReady);
+	if (lnNote) {
+		lnNote.textContent = ctlReady ? ''
+			: '⚠️ 尚未就緒 —— 請先在終端輸入連線密碼完成登入，這一頁的設定才會生效。';
+	}
+	if (on) {
+		say('序列埠控制已就緒（可換鮑率、送 Break、控 DTR／RTS）');
+		if (elBaudRow) elBaudRow.classList.toggle('show', garbleShown);
+	}
+}
+
+/* modem 四燈:0xA0 事件驅動(位元定義同 RFC 2217 NOTIFY-MODEMSTATE) */
+function showModem(m) {
+	if (!lnModem) return;
+	lnModem.textContent =
+		'DCD ' + ((m & 0x80) ? '●' : '○') +
+		'　CTS ' + ((m & 0x10) ? '●' : '○') +
+		'　DSR ' + ((m & 0x20) ? '●' : '○') +
+		'　RI ' + ((m & 0x40) ? '●' : '○');
+}
+
+/* 統一的送出 + 回報。ok 顯示實際值;其餘照 ctlStatusText 講清楚下一步 */
+function ctlDo(label, cmd, payload, onOk) {
+	if (!ctlAvail) { toast('這台裝置的韌體沒有序列埠控制通道（v1.8 起支援）', 'warn'); return; }
+	if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
+	if (lnStat) lnStat.textContent = label + '…';
+	ctlRequest(cmd, payload).then(function(r) {
+		var msg = label + '：' + ctlStatusText(r.status, r.actual);
+		if (lnStat) lnStat.textContent = msg;
+		toast(msg, r.status === 0 ? '' : 'warn');
+		if (r.status === 0 && onOk) onOk(r.actual);
+	}).catch(function(e) {
+		var msg = e && e.message === 'local-timeout'
+			? label + '：裝置沒有回應（連線可能已中斷）'
+			: label + '：送不出去（連線可能已中斷）';
+		if (lnStat) lnStat.textContent = msg;
+		toast(msg, 'warn');
+	});
+}
+
+function be32(v) {
+	return [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
+}
+
+/* 一鍵換鮑率(亂碼急救那排 + 線路面板共用同一個出口) */
+function trySetBaud(baud) {
+	ctlDo('切換鮑率 ' + baud, C_BAUD, be32(baud), function() {
+		/* 換了鮑率就重新開始統計:舊窗口的壞字元是換之前的,
+		 * 不歸零的話新鮑率正確也可能因為殘留比例又跳一次提示 */
+		senseTotal = 0;
+		senseBad = 0;
+		if (lnBaud) lnBaud.value = String(baud);
+	});
+}
+
 /* ── 快捷鍵列 ──────────────────────────────────────────────
  * 手機沒有 Tab/Esc/Ctrl/方向鍵,這排按鈕是行動裝置操作 console 的主力。
  * 送出的位元組寫在 index.html 的 data-seq(16 進位),便於稽核。*/
@@ -294,12 +495,20 @@ function ctrlByte(ch) {
 	btnBreak.addEventListener('click', function() {
 		flash(btnBreak);
 		/* 手機看不到 tooltip → 用提示浮條講原因,而不是做成按了沒反應的死鈕 */
-		if (!BREAK_SUPPORTED) {
-			toast('藍牙路徑尚未支援 Break（獨立控制通道規劃中）。' +
-				'請改用管理介面的網頁終端（可送 BREAK），或用支援 RFC 2217 的軟體連 4001 埠', 'warn');
+		if (!ctlAvail) {
+			toast('這台裝置的韌體還不支援從藍牙送 Break（韌體 v1.8 起支援）。' +
+				'請改用管理介面的網頁終端（可送 Break），或用支援 RFC 2217 的軟體連 4001 埠', 'warn');
 			return;
 		}
 		if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
+		if (!ctlReady) {
+			toast('請先在終端輸入連線密碼完成登入，Break 才送得出去', 'warn');
+			return;
+		}
+		/* 2 = pulse:拉低 250 毫秒再放開,**由裝置端計時** ——
+		 * 交給瀏覽器計時的話,分頁被切到背景時 timer 會被節流到好幾秒,
+		 * 那條線就一直斷著(對正在開機的設備是會出事的那種)。 */
+		ctlDo('送出 Break', C_BREAK, [2]);
 		term.focus();
 	});
 })();
@@ -472,8 +681,10 @@ function logSince(mark) {
  *   ① 廠牌智慧快捷鈕 —— 偵測到誰,就給誰的常用巡檢指令
  *   ② 亂碼偵測的提示文字 —— 借 baud 欄講「這家 console 預設多半是多少」
  * ⚠️ 與管理介面版(`terminal.js` 的 `VENDORS`)**逐字同步**,改一邊要改兩邊。
- * ⚠️ `baud` 在本頁**只是提示文字** —— BLE 沒有 RFC 2217,本頁沒有換鮑率的能力,
- *    所以不做成按鈕(那是管理介面「亂碼急救」才有的東西,見 showGarbleHint)。
+ * ⚠️ `baud` 的用法**依韌體而異**(2026-09-05 更新):韌體 v1.8 起有控制通道 ⇒
+ *    它同時是「一鍵試鮑率」那排的第一顆按鈕(最可能對的那個);舊韌體沒有控制
+ *    通道 ⇒ 退回**只當提示文字**。兩條路都在 showGarbleHint 裡。
+ *    ~~舊敘述:「BLE 沒有 RFC 2217,本頁沒有換鮑率的能力,所以不做成按鈕」~~
  * 手冊 §4.5「廠牌預設值表」與本表人工同步。 */
 var VENDORS = [
 	{ key: 'cisco', name: 'Cisco IOS', kw: /cisco|IOS Software|ROMMON/i, baud: '9600',
@@ -596,22 +807,72 @@ function hideVendorRow() {
 	setTimeout(fitRows, 0);
 }
 
-/* ── 亂碼偵測(不是「亂碼急救」)────────────────────────────────────────
- * ⚠️ 對外名稱刻意與管理介面的網頁終端不同:那邊叫「亂碼急救」,因為它有 RFC 2217
- *    控制通道,提示旁邊就是「9600 / 115200 / 38400」三顆一鍵換鮑率的按鈕。
- *    藍牙這條路沒有控制通道(見檔頭),按鈕做不出來 —— 只做偵測就得叫「亂碼偵測」,
- *    並且要明確告訴使用者「該去哪裡改」,不能留一句提示讓人乾瞪眼
- *    (本專案紀律:全頁無沉默死鈕,也不做沒有下一步的提示)。 */
+/* ── 亂碼急救 / 亂碼偵測(對外名稱依韌體能力而異)──────────────────────
+ * ⚠️ 一頁兩種說法,是刻意的:
+ *   - 韌體 **v1.8 起**有控制通道 ⇒ 提示旁邊就給一排一鍵換鮑率的按鈕,
+ *     與管理介面網頁終端的「亂碼急救」同一個語意。
+ *   - **舊韌體**沒有控制通道 ⇒ 那排按鈕做不出來,只能偵測;文案必須明確
+ *     告訴使用者「該去哪裡改」,不留一句讓人乾瞪眼的提示。
+ * 本頁公開託管、買家手上什麼韌體都有,兩種情況都要能自圓其說
+ * (本專案紀律:全頁無沉默死鈕,也不做沒有下一步的提示)。 */
 function showGarbleHint() {
+	var why;
+
 	if (garbleShown) return;
 	garbleShown = true;   /* 本次連線只提示一次,不當跳針保姆 */
 	/* 廠牌表的第二個消費者:偵測得到廠牌就講那家的預設值,講不出來才給通則。
 	 * (亂碼時廠牌多半偵測不到 —— 字都解不開了 —— 但半糊半清的情況確實會發生) */
-	showBanner('⚠️ 輸出像亂碼 —— 最常見原因是鮑率不符（' +
-		(vendorBaud ? '偵測到的設備看起來是 ' + vendorName() + '，其 console 預設多為 ' +
-			vendorBaud : '設備常見 9600 或 115200') +
-		'）。藍牙這條路沒有控制通道，改鮑率請到裝置的管理介面「網頁終端」頁，' +
-		'或用支援 RFC 2217 的軟體連 4001 埠。');
+	why = vendorBaud
+		? '偵測到的設備看起來是 ' + vendorName() + '，其 console 預設多為 ' + vendorBaud
+		: '設備常見 9600 或 115200';
+	if (ctlAvail) {
+		showBanner('⚠️ 輸出像亂碼 —— 最常見原因是鮑率不符（' + why +
+			'）。下面挑一個試試看 —— 按了才會換，本頁不會自己動你的設備。');
+		showBaudRow();
+	} else {
+		showBanner('⚠️ 輸出像亂碼 —— 最常見原因是鮑率不符（' + why +
+			'）。這台裝置的韌體還不能從藍牙改鮑率（韌體 v1.8 起可以），' +
+			'改鮑率請到裝置的管理介面「網頁終端」頁，' +
+			'或用支援 RFC 2217 的軟體連 4001 埠。');
+	}
+}
+
+/* 一鍵試鮑率那排:只在亂碼提示出現、且韌體有控制通道時才建。
+ * 廠牌預設值排第一顆(偵測得到的話)—— 那是最可能對的那個。
+ * ⚠️ 這排是**條件顯示**,沒亂碼時零佔位,不吃「常駐區塊最多兩排」的額度。 */
+function showBaudRow() {
+	var list = BAUD_TRY.slice(), vb, i;
+
+	if (!elBaudRow || !ctlAvail) return;
+	vb = vendorBaud ? parseInt(vendorBaud, 10) : 0;
+	if (vb) list = [vb].concat(list.filter(function(b) { return b !== vb; }));
+
+	while (elBaudRow.firstChild) elBaudRow.removeChild(elBaudRow.firstChild);
+	elBaudRow.appendChild(document.createTextNode('一鍵試鮑率：'));
+	for (i = 0; i < list.length; i++) {
+		(function(b, isVendor) {
+			var btn = document.createElement('button');
+
+			btn.tabIndex = -1;
+			/* textContent:數字是我們自己算的,但一律不碰 innerHTML 是全頁通則 */
+			btn.textContent = b + (isVendor ? '（廠牌預設）' : '');
+			btn.title = '把序列埠切換成 ' + b + ' bps';
+			btn.addEventListener('click', function() {
+				flash(btn);
+				trySetBaud(b);
+				term.focus();
+			});
+			elBaudRow.appendChild(btn);
+		})(list[i], !!vb && list[i] === vb);
+	}
+	elBaudRow.classList.add('show');
+	setTimeout(fitRows, 0);   /* 多一排 → 終端列數要重算 */
+}
+
+function hideBaudRow() {
+	if (!elBaudRow) return;
+	elBaudRow.classList.remove('show');
+	setTimeout(fitRows, 0);
 }
 
 function vendorName() {
@@ -711,7 +972,10 @@ function gattConnectWithRetry(dev, tries) {
 }
 
 function wireUp(server) {
+	var svcRef = null;
+
 	return server.getPrimaryService(NUS_SVC).then(function(svc) {
+		svcRef = svc;   /* 控制通道的兩顆特徵值稍後也從這個 service 取 */
 		return Promise.all([
 			svc.getCharacteristic(NUS_RX),
 			svc.getCharacteristic(NUS_TX)
@@ -728,6 +992,27 @@ function wireUp(server) {
 			logAppend(u8);
 		});
 		return txChar.startNotifications();
+	}).then(function() {
+		/* ── 控制通道:可有可無 ──
+		 * ⚠️ 這兩顆**一定要容錯**。舊韌體(v1.7 及之前)根本沒有它們,
+		 * getCharacteristic 會 reject;若不接住,整個連線流程會掉進
+		 * catch 變成「連線失敗」—— 那會讓所有舊韌體的使用者連不上,
+		 * 是這一版最容易造成的迴歸。 */
+		return Promise.all([
+			svcRef.getCharacteristic(CTL_RX).catch(function() { return null; }),
+			svcRef.getCharacteristic(CTL_TX).catch(function() { return null; })
+		]);
+	}).then(function(cc) {
+		ctlRxChar = cc[0];
+		ctlTxChar = cc[1];
+		setCtlAvail(!!(ctlRxChar && ctlTxChar));
+		if (!ctlAvail) return null;
+		ctlTxChar.addEventListener('characteristicvaluechanged', function(ev) {
+			var dv = ev.target.value;
+			onCtlFrame(new Uint8Array(
+				dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength)));
+		});
+		return ctlTxChar.startNotifications();
 	}).then(function() {
 		setStatus('已連線:' + (device.name || '(無名裝置,連線後名稱可能稍後出現)'), 'ok');
 		setButtons('connected');
@@ -762,6 +1047,14 @@ btnConnect.onclick = function() {
 			/* 意外斷線 → 顯示重連鈕(釘住同一 device,不重開 chooser) */
 			dev.addEventListener('gattserverdisconnected', function() {
 				rxChar = txChar = null;
+				/* 控制通道狀態一併歸零:斷線後那些按鈕必須立刻失去作用,
+				 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
+				 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
+				ctlRxChar = ctlTxChar = null;
+				setCtlAvail(false);
+				hideBaudRow();
+				ctlPending.forEach(function(r) { clearTimeout(r.timer); });
+				ctlPending = [];
 				if (wantDisconnect) {
 					setStatus('已斷線');
 					setButtons('idle');
@@ -905,6 +1198,9 @@ function showBanner(text) {
 
 $('ctxClose').addEventListener('click', function() {
 	elBanner.classList.remove('show');
+	/* 一鍵試鮑率那排是這條橫幅的附屬品 —— 關掉提示就一起收,
+	 * 不然畫面上會留一排沒有上下文的鮑率按鈕(誤按會改到正式設備) */
+	hideBaudRow();
 	setTimeout(fitRows, 0);
 });
 
@@ -915,6 +1211,87 @@ elVendorClose.addEventListener('click', function() {
 	hideVendorRow();
 	toast('已關閉廠牌快捷鈕（重新整理頁面可復原）');
 });
+
+/* ══ 線路設定(控制通道)════════════════════════════════════════════════
+ * 連線參數 / Break / DTR / RTS / modem 燈 全放進一個抽屜。
+ * **刻意不做成常駐排**:6 吋螢幕上每多一排常駐區塊,終端就少兩行,
+ * 而這些設定是「偶爾調一次」不是「一直看著」。亂碼急救那一排例外 ——
+ * 它是條件顯示,而且出現的那一刻正是最需要它的時候。
+ *
+ * 零持久化:面板上的選擇不寫進任何瀏覽器儲存,關頁即消(見檔頭鐵律①)。 */
+if (btnLine) {
+	btnLine.onclick = function() {
+		flash(btnLine);
+		if (!ctlAvail) {
+			toast('這台裝置的韌體沒有序列埠控制通道（韌體 v1.8 起支援）', 'warn');
+			return;
+		}
+		sheetPush(shLine);
+		/* 開面板就順手讀一次現況 —— 使用者最想知道的是「現在是多少」。
+		 * 讀不到(唯讀/未登入)不當錯誤,面板照樣能用,狀態列會說明原因。 */
+		if (ctlReady) readLineState();
+	};
+}
+
+/* 讀回目前的線路參數(裝置端以 RFC 2217 的「查詢」語意問 ser2net) */
+function readLineState() {
+	ctlDo('讀取目前鮑率', C_STATE, [], function(v) {
+		if (v && lnBaud) lnBaud.value = String(v);
+	});
+}
+
+if (lnRead) lnRead.onclick = function() { flash(lnRead); readLineState(); };
+
+/* 套用:四個參數逐一送。**序列化**送出(ctlRequest 走同一條 writeQueue),
+ * 一則一則等回應,避免四個回應與四個待辦配錯對。 */
+if (lnApply) {
+	lnApply.onclick = function() {
+		var baud = parseInt(lnBaud.value, 10);
+
+		flash(lnApply);
+		if (!(baud >= 50 && baud <= 3000000)) {
+			toast('鮑率請填 50 ～ 3000000 之間的整數', 'warn');
+			return;
+		}
+		ctlDo('切換鮑率 ' + baud, C_BAUD, be32(baud), function() {
+			senseTotal = 0; senseBad = 0;
+			ctlDo('資料位元 ' + lnData.value, C_DATA, [parseInt(lnData.value, 10)],
+				function() {
+					ctlDo('同位檢查', C_PARITY, [parseInt(lnParity.value, 10)],
+						function() {
+							ctlDo('停止位元', C_STOP, [parseInt(lnStop.value, 10)]);
+						});
+				});
+		});
+	};
+}
+
+if (lnBreak) {
+	lnBreak.onclick = function() {
+		flash(lnBreak);
+		if (!ctlReady) { toast('請先完成密碼登入', 'warn'); return; }
+		ctlDo('送出 Break', C_BREAK, [2]);
+	};
+}
+
+/* DTR / RTS:aria-pressed 就是狀態來源(不另存變數,避免兩份真相)。
+ * ⚠️ 只有裝置端回 ok 才翻轉外觀 —— 沒生效就把鈕留在原狀,
+ * 不可以先翻好看的再說,那會讓唯讀者以為自己控到了線路。 */
+function wireLineToggle(btn, cmd, label) {
+	if (!btn) return;
+	btn.onclick = function() {
+		var on = btn.getAttribute('aria-pressed') !== 'true';
+
+		flash(btn);
+		if (!ctlReady) { toast('請先完成密碼登入', 'warn'); return; }
+		ctlDo(label + (on ? ' 拉高' : ' 拉低'), cmd, [on ? 1 : 0], function() {
+			btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+			btn.classList.toggle('armed', on);
+		});
+	};
+}
+wireLineToggle(lnDTR, C_DTR, 'DTR');
+wireLineToggle(lnRTS, C_RTS, 'RTS');
 
 /* ══ Log 檢視器 ════════════════════════════════════════════════════════
  * 把側錄拉出來當靜態文字看。分工講清楚:
@@ -1375,6 +1752,10 @@ $('aiCopy').addEventListener('click', function() {
 
 	setKeysLive(false);
 	setCtrlArmed(false);
+	/* 未連線 ⇒ 還不知道對方韌體有沒有控制通道 → 一律先隱藏。
+	 * 「先顯示再視情況拿掉」會讓按鈕在連線瞬間閃一下,而且舊韌體使用者
+	 * 會看到一組隨即消失的功能,比從頭沒有更困惑。 */
+	setCtlAvail(false);
 
 	if (envCheck()) {
 		say('按上方「選擇裝置並連線」開始。');
