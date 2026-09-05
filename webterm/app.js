@@ -3,16 +3,23 @@
  *
  * 用瀏覽器透過 BLE 連進 AirTTY 裝置的序列 console，不必安裝軟體、不必配對。
  *
- * 安全性設計：console 流量（含連線密碼）全程流經本頁的 JavaScript，因此本頁
- * 刻意做成可稽核、可自行託管：
- *   - 零對外傳輸：全檔沒有 fetch / XMLHttpRequest / WebSocket / sendBeacon。
- *   - 零外部資源：xterm.js 與 xterm.css 就放在同一個資料夾，不引用任何 CDN。
- *   - 整個目錄可下載後離線自架（作法見同目錄 README.md）。
- * 想自行驗證，可在本目錄執行：
- *   grep -riE "fetch\(|XMLHttpRequest|WebSocket|sendBeacon|src=\"http" .
- * 唯一的命中應該只有這段註解與 README.md 的同一段說明，程式碼本體零命中。
- * （「下載紀錄」用的 Blob / URL.createObjectURL 與「貼上」用的 navigator.clipboard
- *   都只在瀏覽器記憶體內作業，不產生任何網路請求。）
+ * 安全性設計：本頁公開託管、給所有人使用，console 流量（含連線密碼）又全程流經
+ * 本頁的 JavaScript，因此界線刻意畫得比一般網頁嚴格 —— 詳細承諾與可自行執行的
+ * 稽核指令見同目錄 README.md「安全性」節，這裡只摘要三條鐵律：
+ *
+ *   ① 零使用者資料持久化：終端輸出、側錄、你打的指令、AI 問答內容，一律只存在
+ *      「本次分頁的記憶體」，關頁即消。全檔沒有任何一行把使用者內容寫進
+ *      localStorage / sessionStorage / IndexedDB / cookie。
+ *      唯二的兩筆瀏覽器儲存是「字級」與「快捷鍵列展開狀態」兩個 UI 偏好
+ *      （見 LS_FONT / LS_KEYS），值只有數字與 0/1，不含任何使用者內容。
+ *   ② 零對外傳輸：本檔沒有任何對外的網路呼叫。AI 功能走「複製到剪貼簿 +
+ *      開新分頁到官方聊天頁」，內容由你自己貼上、自己按送出，本頁不代送、不存 key。
+ *      （唯一的例外在 sw.js，而它只對「本站自己的檔案」作用 —— README 有完整說明。）
+ *   ③ 零外部資源：xterm.js 與 xterm.css 就放在同一個資料夾，不引用任何 CDN。
+ *      整個目錄可下載後離線自架（作法見 README.md）。
+ *
+ * （「下載紀錄」「下載顯示結果」用的 Blob / URL.createObjectURL 與「貼上」「複製」
+ *   用的 navigator.clipboard，都只在瀏覽器記憶體內作業，不產生任何網路請求。）
  *
  * 裝置端介面（決定本頁寫法的事實）：
  * - Nordic UART Service：service 6e400001-…、RX 6e400002（瀏覽器→裝置，write）、
