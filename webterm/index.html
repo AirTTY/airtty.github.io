@@ -134,6 +134,94 @@ button.active { background: #1c4e8a; border-color: #2a6cb8; }
 #term .xterm { height: 100%; }
 a { color: var(--accent); }
 .hidden { display: none !important; }
+
+/* 第二排工具列：新增了 🔎 Log／🤖 AI 之後在 6 吋螢幕上會折成第三排，
+   而「常駐區塊最多兩排」是這頁的版面上限（多一排＝終端少兩行）→ 改成不折行、自己橫捲。 */
+.krow.scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; }
+.krow.scroll > * { flex: 0 0 auto; }
+
+/* ── 情境橫幅 ──
+ * 目前唯一的使用者是「亂碼偵測」。刻意只做一條共用橫幅、不是每個情境一排：
+ * 6 吋螢幕上每多一排常駐區塊，終端就少兩行。沒有情境時 display:none，零佔位。 */
+#ctxBanner {
+	display: none; align-items: flex-start; gap: .6em;
+	padding: .55em .8em; background: #3a2f18; color: #ffd9a0;
+	border-bottom: 1px solid var(--warn); font-size: .9em; line-height: 1.45;
+}
+#ctxBanner.show { display: flex; }
+#ctxBanner button {
+	flex: 0 0 auto; min-height: 32px; min-width: 32px; padding: 0 .5em;
+	background: transparent; border-color: rgba(255, 217, 160, .4); color: inherit;
+}
+
+/* ── 全螢幕抽屜（sheet）──
+ * 每個面板＝蓋滿畫面的一層＋左上角返回鈕。6 吋螢幕放不下側欄，
+ * 而且 sheet 不必跟終端搶高度 —— 關掉就完全還原。
+ * z-index 刻意壓在 #toast（20）與 #pwaUpdate（21）之下：面板開著時
+ * 「已複製」「已下載」這些回饋還是要看得到，不能被面板蓋掉。 */
+.sheet {
+	position: fixed; inset: 0; z-index: 15;
+	background: var(--bg); display: flex; flex-direction: column;
+}
+.sheet[hidden] { display: none; }
+.sheet > header { flex: 0 0 auto; }
+.sheet h2 { font-size: 1em; margin: 0; font-weight: 600; }
+.sheetbar {
+	flex: 0 0 auto; display: flex; gap: .4em; align-items: center;
+	flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin;
+	padding: .45em .8em; background: var(--panel); border-bottom: 1px solid var(--border);
+}
+.sheetbar > * { flex: 0 0 auto; }
+.sheetbar .grow { flex: 1 1 140px; min-width: 110px; }
+.sheetbar button, .sheet header button { min-height: 40px; min-width: 44px; }
+.sheet input[type="text"], .sheet textarea, .sheet select {
+	font: inherit; color: var(--fg); background: #2e2e36;
+	border: 1px solid var(--border); border-radius: 6px;
+	padding: .4em .6em; min-height: 40px;
+}
+.sheet textarea { width: 100%; line-height: 1.5; resize: vertical; }
+.sheet label { display: inline-flex; align-items: center; gap: .3em; font-size: .9em; white-space: nowrap; }
+.sheet label input[type="checkbox"] { width: 20px; height: 20px; }
+.note { font-size: .85em; color: var(--dim); }
+/* 外開官方聊天頁的連結，長得跟按鈕一樣（它不是按鈕：要讓使用者能長按看網址） */
+.btnlink {
+	font: inherit; color: var(--fg); background: #2e2e36;
+	border: 1px solid var(--border); border-radius: 6px;
+	padding: .35em .9em; min-height: 40px; text-decoration: none;
+	display: inline-flex; align-items: center;
+}
+.btnlink:hover { background: #383842; }
+.sheetbody { flex: 1 1 auto; min-height: 0; overflow: auto; padding: .5em .8em; }
+
+/* Log 檢視器的行：設備輸出一律 textContent 寫入，永遠不碰 innerHTML */
+#logLines { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	white-space: pre-wrap; word-break: break-all; }
+#logLines > div { padding: 0 .2em; }
+
+/* 回放的第二個終端：唯讀，字級固定 13，與主終端同樣允許水平捲動 */
+#replayBox { background: #000; border-radius: 4px; padding: 4px; height: 100%; min-height: 220px; overflow-x: auto; }
+#replaySlider { width: 100%; margin: .3em 0; height: 34px; }
+
+/* 報告：畫面上維持深色，列印時整頁翻成淺色（省墨、影印清楚） */
+#reportBody h1 { font-size: 1.25em; margin: .2em 0 .6em; }
+#reportBody h2 { font-size: 1em; margin: 1.1em 0 .35em; border-bottom: 1px solid var(--border); padding-bottom: .25em; }
+#reportBody table { border-collapse: collapse; font-size: .9em; }
+#reportBody td { border: 1px solid var(--border); padding: .3em .7em; }
+#reportBody pre { font: 12px/1.45 ui-monospace, Menlo, monospace; background: #0d0d10;
+	border: 1px solid var(--border); border-radius: 4px; padding: .6em;
+	white-space: pre-wrap; word-break: break-all; }
+
+/* 列印：不開新分頁、不彈視窗，直接印目前這一層。
+   （彈出視窗會被行動瀏覽器擋，PWA 獨立視窗下 Android 還會開成 Custom Tab。） */
+@media print {
+	body > * { display: none !important; }
+	body > #sheetReport { display: block !important; position: static; background: #fff; color: #000; }
+	#sheetReport > header, #sheetReport .sheetbar, #sheetReport .noprint { display: none !important; }
+	#sheetReport .sheetbody { overflow: visible; padding: 0; }
+	#reportBody h2 { border-bottom: 1px solid #999; }
+	#reportBody td { border: 1px solid #999; }
+	#reportBody pre { background: #f6f6f6; border: 1px solid #ccc; color: #000; }
+}
 </style>
 </head>
 <body>
@@ -196,7 +284,9 @@ a { color: var(--accent); }
 			title="進階：按一下之後再敲一個鍵，該鍵會以 Ctrl+它送出（給上面沒列到的罕用組合用）">Ctrl+…</button>
 		<span id="kbHint"></span>
 	</div>
-	<div class="krow">
+	<!-- 第二排：常駐入口只放最常用的五個，回放／報告收進 Log 面板裡
+	     （版面上限是兩排；這排不折行、放不下就橫捲）-->
+	<div class="krow scroll">
 		<button id="btnPaste" tabindex="-1" title="從剪貼簿貼上並送出（多行會先確認）">📋 貼上</button>
 		<span class="grp">
 			<button id="btnFontDown" tabindex="-1" aria-label="縮小字體" title="縮小字體">A−</button>
@@ -205,10 +295,154 @@ a { color: var(--accent); }
 		</span>
 		<button id="btnLog" tabindex="-1"
 			title="把本次連線收到的畫面輸出存成純文字檔（在瀏覽器本機產生，不會上傳）">⬇ 下載紀錄</button>
+		<button id="btnLogView" tabindex="-1"
+			title="把側錄拉出來當靜態文字看：過濾、搜尋定位、只看警示行；回放與維運報告也在裡面。偵測到警示關鍵字時鈕上會出現 (N⚠)">🔎 Log</button>
+		<button id="btnAI" tabindex="-1"
+			title="把側錄整理成可貼給 AI 的提問內容（自動遮蔽 IP／MAC／密碼），複製後到官方聊天頁貼上。本頁不代送、不存 API key">🤖 AI</button>
 	</div>
 </div>
 
+<!-- 情境橫幅：同時只顯示一條，沒有情境時零佔位。目前唯一使用者是亂碼偵測 -->
+<div id="ctxBanner" role="status" aria-live="polite">
+	<span id="ctxText"></span>
+	<span class="sep"></span>
+	<button id="ctxClose" tabindex="-1" aria-label="關閉提示" title="關閉提示">✕</button>
+</div>
+
 <div id="term"></div>
+
+<!-- ══ Log 檢視器 ══════════════════════════════════════════════════════
+     過濾＝縮小顯示的行；搜尋＝在目前顯示的行裡跳著定位，兩者分工不互相干擾。
+     每行一律用 textContent 寫入：設備輸出是不可信資料，不得變成活 DOM。 -->
+<div class="sheet" id="sheetLog" hidden aria-hidden="true" role="dialog" aria-label="Log 檢視器">
+	<header>
+		<button class="sheetback" data-close="sheetLog" title="返回終端">← 返回</button>
+		<h2>🔎 Log 檢視器</h2>
+		<span class="sep"></span>
+		<span id="lvStat" class="note"></span>
+	</header>
+	<div class="sheetbar">
+		<input type="text" id="lvFilter" class="grow" placeholder="過濾：純文字，或 /regex/i"
+			autocapitalize="off" autocomplete="off" spellcheck="false">
+		<label title="只列出命中警示關鍵字的行（error／fail／denied／link down／Cisco %…-0~3-… 等）">
+			<input type="checkbox" id="lvAlerts">只看警示行</label>
+		<button id="lvReload" title="重抓側錄（看檢視器開著時新進來的輸出），保留目前過濾條件">↻ 重新整理</button>
+	</div>
+	<div class="sheetbar">
+		<input type="text" id="lvSearch" class="grow" placeholder="搜尋：純文字，或 /regex/i"
+			autocapitalize="off" autocomplete="off" spellcheck="false">
+		<button id="lvPrev" title="跳到上一個命中的行（會環繞）">↑</button>
+		<button id="lvNext" title="跳到下一個命中的行（會環繞）">↓</button>
+		<span id="lvSStat" class="note"></span>
+	</div>
+	<div class="sheetbar">
+		<button id="lvDl" title="把目前顯示的行存成純文字檔">⬇ 下載顯示結果</button>
+		<button id="lvReplay" title="照側錄當時的時間節奏重播一次（看得到輸出的先後與停頓）">▶ 回放</button>
+		<button id="lvReport" title="把側錄＋連線資訊組成列印友善頁，可直接存 PDF">📄 報告</button>
+	</div>
+	<div class="sheetbody"><div id="logLines"></div></div>
+</div>
+
+<!-- ══ 時間軸回放 ══════════════════════════════════════════════════════
+     時間軸來源是每塊側錄的到達時間戳。拖曳只能「reset 後從頭重放到該塊」——
+     xterm 沒有倒帶，終端狀態是逐塊累積出來的，跳著寫會得到錯畫面。 -->
+<div class="sheet" id="sheetReplay" hidden aria-hidden="true" role="dialog" aria-label="時間軸回放">
+	<header>
+		<button class="sheetback" data-close="sheetReplay" title="返回 Log 檢視器">← 返回</button>
+		<h2>⏱ 時間軸回放</h2>
+		<span class="sep"></span>
+		<span id="rpTime" class="note"></span>
+	</header>
+	<div class="sheetbar">
+		<button id="rpPlay" class="primary" title="照原本的到達間隔重播；播放中再按一次暫停">▶ 播放</button>
+		<label>倍速
+			<select id="rpSpeed" title="全速＝固定 16ms 一塊，用來快轉過長段靜置">
+				<option value="1">1x</option>
+				<option value="4" selected>4x</option>
+				<option value="0">全速</option>
+			</select></label>
+		<span id="rpPos" class="note"></span>
+	</div>
+	<div style="padding:0 .8em">
+		<input type="range" id="replaySlider" min="0" max="0" value="0"
+			title="拖曳跳到任一塊（會從頭重放到該處，畫面才正確）">
+		<div class="note">⚠️ 時間是「這支手機收到的時間」，不是設備送出的時間 ——
+			藍牙下行有速率上限，連噴 log 時節奏會被拉平。</div>
+	</div>
+	<div class="sheetbody"><div id="replayBox"></div></div>
+</div>
+
+<!-- ══ 維運報告 ══════════════════════════════════════════════════════════
+     刻意不開新分頁：彈出視窗會被行動瀏覽器擋，PWA 獨立視窗下 Android 還會
+     開成 Custom Tab。改成就地渲染＋@media print 把其餘元素藏起來直接列印。 -->
+<div class="sheet" id="sheetReport" hidden aria-hidden="true" role="dialog" aria-label="維運報告">
+	<header>
+		<button class="sheetback" data-close="sheetReport" title="返回 Log 檢視器">← 返回</button>
+		<h2>📄 維運報告</h2>
+		<span class="sep"></span>
+	</header>
+	<div class="sheetbar">
+		<label title="把 IP 後兩節、MAC 裝置碼、password／secret／community 之類欄位的值換成遮罩">
+			<input type="checkbox" id="rpMask" checked>遮蔽 IP／MAC／密碼</label>
+		<button id="rpPrint" class="primary" title="開啟瀏覽器列印畫面，可選「另存為 PDF」">🖨 列印／存 PDF</button>
+	</div>
+	<div class="sheetbody"><div id="reportBody"></div></div>
+</div>
+
+<!-- ══ AI 排障助手（官方聊天頁模式）══════════════════════════════════════
+     本頁不呼叫任何 AI API、不存 API key、不代送任何內容。
+     動線＝產生預覽（已遮蔽，可再手改）→ 你自己複製 → 開官方聊天頁自己貼上。 -->
+<div class="sheet" id="sheetAI" hidden aria-hidden="true" role="dialog" aria-label="AI 排障助手">
+	<header>
+		<button class="sheetback" data-close="sheetAI" title="返回終端">← 返回</button>
+		<h2>🤖 AI 排障助手</h2>
+		<span class="sep"></span>
+		<span id="aiStat" class="note"></span>
+	</header>
+	<div class="sheetbody">
+		<p class="note" style="margin:.2em 0 .8em">
+			本頁<strong>不會</strong>幫你送出、也<strong>不需要</strong> API key ——
+			它只把 console 輸出整理成一段可貼的文字（自動遮蔽 IP／MAC／密碼樣式），
+			複製後由你用自己的帳號到官方聊天頁貼上。<strong>內容不會離開這支手機，
+			除非你自己貼出去。</strong>
+		</p>
+		<label for="aiQ" style="display:block;margin-bottom:.3em">你的問題</label>
+		<textarea id="aiQ" rows="3"
+			placeholder="例：這台 Cisco 交換器一直跳 link down，該從哪裡查？"></textarea>
+		<div class="sheetbar" style="padding-left:0;padding-right:0;background:none;border:none">
+			<label>附上輸出
+				<select id="aiCtx">
+					<option value="sel">目前在終端選取的範圍</option>
+					<option value="50" selected>最近 50 行</option>
+					<option value="200">最近 200 行</option>
+					<option value="1000">最近 1000 行</option>
+					<option value="new">上次複製後的新輸出</option>
+					<option value="0">不附輸出</option>
+				</select></label>
+			<label title="IP 只留前兩節、MAC 只留 OUI、password／secret／community 的值換成 ****">
+				<input type="checkbox" id="aiMask" checked>遮蔽敏感資訊</label>
+			<button id="aiPreview" class="primary">🛡 產生送出預覽</button>
+		</div>
+		<div id="aiSendWrap" hidden>
+			<label for="aiPrev" style="display:block;margin:.6em 0 .3em">
+				送出預覽 —— <strong>這就是你會貼出去的全文，請先目視檢查</strong>（可直接在這裡編輯）</label>
+			<textarea id="aiPrev" rows="12" spellcheck="false"></textarea>
+			<div class="sheetbar" style="padding-left:0;padding-right:0;background:none;border:none">
+				<button id="aiCopy" class="primary">📋 複製內容</button>
+				<span class="note">再開：</span>
+				<a class="btnlink" id="aiGemini" href="https://gemini.google.com/app"
+					target="_blank" rel="noopener noreferrer">↗ Gemini</a>
+				<a class="btnlink" id="aiChatGPT" href="https://chatgpt.com/"
+					target="_blank" rel="noopener noreferrer">↗ ChatGPT</a>
+			</div>
+			<p class="note">
+				⚠️ 連結只是幫你開對方的<strong>首頁</strong>，<strong>不會</strong>把內容帶過去 ——
+				要先按「📋 複製內容」，到對方頁面自己貼上。
+				對方頁面怎麼處理你貼的內容，適用的是<strong>對方</strong>的隱私條款。
+			</p>
+		</div>
+	</div>
+</div>
 <div id="toast" role="status" aria-live="polite"></div>
 <div id="pwaUpdate" role="status">↻ 有新版本 —— 點這裡重新整理套用</div>
 <script src="xterm.js"></script>
