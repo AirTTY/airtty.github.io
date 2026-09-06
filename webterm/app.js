@@ -10,8 +10,9 @@
  *   ① 零使用者資料持久化：終端輸出、側錄、你打的指令、AI 問答內容，一律只存在
  *      「本次分頁的記憶體」，關頁即消。全檔沒有任何一行把使用者內容寫進
  *      localStorage / sessionStorage / IndexedDB / cookie。
- *      唯二的兩筆瀏覽器儲存是「字級」與「快捷鍵列展開狀態」兩個 UI 偏好
- *      （見 LS_FONT / LS_KEYS），值只有數字與 0/1，不含任何使用者內容。
+ *      只有三筆瀏覽器儲存，是「字級」「快捷鍵列展開狀態」「送 Break 前先確認」
+ *      三個 UI 偏好（見 LS_FONT / LS_KEYS / LS_BREAK_CONFIRM），值只有數字與
+ *      0/1，不含任何使用者內容。
  *   ② 零對外傳輸：本檔沒有任何對外的網路呼叫。AI 功能走「複製到剪貼簿 +
  *      開新分頁到官方聊天頁」，內容由你自己貼上、自己按送出，本頁不代送、不存 key。
  *      （唯一的例外在 sw.js，而它只對「本站自己的檔案」作用 —— README 有完整說明。）
@@ -114,6 +115,10 @@ var BAUD_TRY = [9600, 19200, 38400, 57600, 115200];
 
 var LS_FONT = 'airtty.webterm.fontSize';
 var LS_KEYS = 'airtty.webterm.keysOpen';
+/* 「送 Break 前先確認」偏好(2026-09-06 新增)。**線路面板唯一會被記住的東西** ——
+ * 它不是線路參數(不會送到裝置、不影響任何設備),而是這個瀏覽器的操作習慣,
+ * 所以不受「線路參數不記憶」那條鐵律管。缺值 = 開(安全側預設)。 */
+var LS_BREAK_CONFIRM = 'airtty.webterm.breakConfirm';
 var FONT_MIN = 8, FONT_MAX = 24, FONT_DEFAULT = 14;
 
 /* 側錄緩衝上限(**位元組**;v1.7 前這裡是「解碼後字元數」,改存 raw u8 後語意跟著改)。
@@ -172,6 +177,7 @@ var btnLine = $('btnLine'), shLine = $('sheetLine'),
 	lnBaud = $('lnBaud'), lnData = $('lnData'), lnParity = $('lnParity'),
 	lnStop = $('lnStop'), lnApply = $('lnApply'), lnRead = $('lnRead'),
 	lnBreak = $('lnBreak'), lnDTR = $('lnDTR'), lnRTS = $('lnRTS'),
+	lnBreakConfirm = $('lnBreakConfirm'),
 	lnStat = $('lnStat'), lnModem = $('lnModem'), lnNote = $('lnNote');
 var elBaudRow = $('baudRow');
 
@@ -419,15 +425,29 @@ function ctlDo(label, cmd, payload, onOk) {
  * 就可能是 `b`(立刻重開)或 `c`(故意 panic)。在正式防火牆上誤按一次 Break
  * 之後隨手敲個鍵,就會把生產設備弄掛。
  * 這與「多行貼上先確認」是同一條紀律:**會對正式設備造成不可逆後果的動作,
- * 一律先問**。換鮑率頂多看不到字(改回來就好),所以不問。 */
+ * 一律先問**。換鮑率頂多看不到字(改回來就好),所以不問。
+ *
+ * ⚠️ **但這道關卡必須能關掉**(2026-09-06 使用者需求):有些設備接受 Break 的
+ * 時間窗很短(開機那幾秒),現場工程師的習慣動作是**快速連按 Break** ——
+ * 每按一下都跳一次確認,人就來不及了。所以做成偏好:**預設開**(安全側),
+ * 需要連按的人自己到 ⚙ 線路面板關掉。關掉之後 Break 直接送出,責任在使用者。
+ * 讀不到偏好(無痕模式)一律當成「開」—— 出錯要往安全的那邊倒。 */
+function breakConfirmOn() {
+	try { return localStorage.getItem(LS_BREAK_CONFIRM) !== '0'; }
+	catch (e) { return true; }   /* 無痕模式讀不到 → 維持預設的「先確認」 */
+}
+
 function confirmBreak() {
+	if (!breakConfirmOn()) return true;
 	return window.confirm(
 		'即將送出序列 Break 訊號（拉低 250 毫秒）。\n\n' +
 		'⚠️ 這是給「開機時中斷、進 ROM monitor／SysRq」用的訊號，' +
 		'不是一般按鍵。\n\n' +
 		'實測：FortiGate 這類 Linux 設備收到後會進入 SysRq 模式，' +
 		'接下來你敲的任何一個鍵都可能是「重開機」或「當機」指令 —— ' +
-		'送出後請先看清楚畫面再打字。\n\n確定要送出嗎？');
+		'送出後請先看清楚畫面再打字。\n\n' +
+		'若你需要快速連按 Break（有些設備的 Break 時間窗很短），' +
+		'可在 ⚙ 線路面板關閉此確認。\n\n確定要送出嗎？');
 }
 
 function be32(v) {
@@ -1320,7 +1340,10 @@ elVendorClose.addEventListener('click', function() {
  * 而這些設定是「偶爾調一次」不是「一直看著」。亂碼急救那一排例外 ——
  * 它是條件顯示,而且出現的那一刻正是最需要它的時候。
  *
- * 零持久化:面板上的選擇不寫進任何瀏覽器儲存,關頁即消(見檔頭鐵律①)。 */
+ * 零持久化:**線路參數**(鮑率/資料位元/同位/停止位元/DTR/RTS)不寫進任何
+ * 瀏覽器儲存,關頁即消(見檔頭鐵律①)。**唯一例外是「送 Break 前先確認」
+ * 那個勾選**(LS_BREAK_CONFIRM)—— 它不會送到裝置、不影響任何設備,
+ * 只是這個瀏覽器的操作習慣,所以記得住;面板上也照實講清楚。 */
 if (btnLine) {
 	btnLine.onclick = function() {
 		flash(btnLine);
@@ -1374,6 +1397,18 @@ if (lnBreak) {
 		if (!ctlReady) { toast('請先完成密碼登入', 'warn'); return; }
 		if (!confirmBreak()) { toast('已取消 Break'); return; }
 		ctlDo('送出 Break', C_BREAK, [2]);
+	};
+}
+
+/* 「送 Break 前先確認」的開關。寫入包 try/catch —— 無痕模式會擋 setItem,
+ * 沒接住的話這一下會拋例外,連帶讓勾選看起來像壞掉的(而其實只是記不住)。 */
+if (lnBreakConfirm) {
+	lnBreakConfirm.onchange = function() {
+		var on = !!lnBreakConfirm.checked;
+		try { localStorage.setItem(LS_BREAK_CONFIRM, on ? '1' : '0'); }
+		catch (e) { /* 無痕模式會擋,忽略:本次仍照勾選走,只是下次開頁回到預設 */ }
+		toast(on ? '送 Break 前會先確認' :
+			'已關閉 Break 確認 —— 之後按下去會直接送出，請自行留意設備狀態');
 	};
 }
 
@@ -1852,6 +1887,9 @@ $('aiCopy').addEventListener('click', function() {
 	coarse = !!(window.matchMedia &&
 		window.matchMedia('(max-width: 820px), (pointer: coarse)').matches);
 	setToolbarOpen(savedKeys === null ? coarse : savedKeys === '1', false);
+
+	/* 勾選狀態一律由偏好推導(缺值 = 勾),不靠 HTML 的 checked 屬性當真相來源 */
+	if (lnBreakConfirm) lnBreakConfirm.checked = breakConfirmOn();
 
 	setKeysLive(false);
 	setCtrlArmed(false);

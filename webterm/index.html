@@ -547,7 +547,10 @@ a { color: var(--accent); }
      這些動作**會真的改到你連著的設備**，所以：
        ① 一律「按了才動」，面板打開不會自動套用任何東西
        ② 每個動作都等裝置端回覆，沒生效就明說（不假裝成功）
-       ③ 設定值不記憶（關頁即消）—— 本頁的鐵律①，見 README「安全性」 -->
+       ③ 線路參數不記憶（關頁即消）—— 本頁的鐵律①，見 README「安全性」。
+         唯一例外是「送 Break 前先確認」那個勾選：它不會送到裝置、不影響任何設備，
+         只是這個瀏覽器的操作習慣，所以記在 localStorage（見 app.js 的
+         LS_BREAK_CONFIRM），面板上也照實標明 -->
 <div class="sheet" id="sheetLine" hidden aria-hidden="true" role="dialog" aria-label="線路設定">
 	<header>
 		<button class="sheetback" data-close="sheetLine" title="返回終端">← 返回</button>
@@ -559,7 +562,8 @@ a { color: var(--accent); }
 		<span id="lnNote"></span>
 		<p class="note" style="margin:.2em 0 .9em">
 			改的是<strong>這台 AirTTY 的序列埠</strong>，不是你連著的設備本身。
-			設定只在本次連線有效，斷線就回到裝置預設值。
+			<strong>線路參數不記憶</strong>，只在本次連線有效，斷線就回到裝置預設值
+			—— 僅下方「送 Break 前先確認」這個<strong>瀏覽器偏好</strong>例外。
 		</p>
 		<div class="lnrow">
 			<label for="lnBaud">鮑率</label>
@@ -591,6 +595,18 @@ a { color: var(--accent); }
 			<button id="lnBreak" title="送出序列 Break（拉低 250 毫秒再放開，由裝置端計時）">⚡ 送 Break</button>
 			<button id="lnDTR" aria-pressed="false" title="切換 DTR 線">DTR</button>
 			<button id="lnRTS" aria-pressed="false" title="切換 RTS 線">RTS</button>
+		</div>
+		<!-- Break 確認的開關。預設勾（安全側）；取消勾選是給「開機時間窗很短、
+		     需要快速連按 Break」的現場用的 —— 每按一下都跳確認就來不及了。 -->
+		<div class="lnrow" style="margin-top:-.3em">
+			<label for="lnBreakConfirm" style="display:flex;align-items:center;gap:.4em">
+				<input type="checkbox" id="lnBreakConfirm" checked>
+				送 Break 前先確認
+			</label>
+			<span class="note" style="font-size:.8em">
+				取消勾選＝按下去直接送出（適合 Break 時間窗很短、要快速連按的設備）。
+				此偏好會記在這個瀏覽器（不是裝置設定）。
+			</span>
 		</div>
 		<span id="lnStat"></span>
 		<p class="note" style="margin-top:1em">
