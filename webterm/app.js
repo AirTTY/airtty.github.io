@@ -405,6 +405,24 @@ function ctlDo(label, cmd, payload, onOk) {
 	});
 }
 
+/* Break 送出前的確認。
+ * ⚠️ **為什麼 Break 要確認、而其他線路設定不用**(2026-09-06 實測後補):
+ * 拿一台 FortiGate-60F 實測,BREAK 讓它進入 **Linux magic SysRq** 模式 ——
+ * 畫面出現 `SysRq : HELP : loglevel(0-9) reBoot Crash …`,此時**下一個按鍵**
+ * 就可能是 `b`(立刻重開)或 `c`(故意 panic)。在正式防火牆上誤按一次 Break
+ * 之後隨手敲個鍵,就會把生產設備弄掛。
+ * 這與「多行貼上先確認」是同一條紀律:**會對正式設備造成不可逆後果的動作,
+ * 一律先問**。換鮑率頂多看不到字(改回來就好),所以不問。 */
+function confirmBreak() {
+	return window.confirm(
+		'即將送出序列 Break 訊號（拉低 250 毫秒）。\n\n' +
+		'⚠️ 這是給「開機時中斷、進 ROM monitor／SysRq」用的訊號，' +
+		'不是一般按鍵。\n\n' +
+		'實測：FortiGate 這類 Linux 設備收到後會進入 SysRq 模式，' +
+		'接下來你敲的任何一個鍵都可能是「重開機」或「當機」指令 —— ' +
+		'送出後請先看清楚畫面再打字。\n\n確定要送出嗎？');
+}
+
 function be32(v) {
 	return [(v >>> 24) & 0xff, (v >>> 16) & 0xff, (v >>> 8) & 0xff, v & 0xff];
 }
@@ -505,6 +523,7 @@ function ctrlByte(ch) {
 			toast('請先在終端輸入連線密碼完成登入，Break 才送得出去', 'warn');
 			return;
 		}
+		if (!confirmBreak()) { toast('已取消 Break'); term.focus(); return; }
 		/* 2 = pulse:拉低 250 毫秒再放開,**由裝置端計時** ——
 		 * 交給瀏覽器計時的話,分頁被切到背景時 timer 會被節流到好幾秒,
 		 * 那條線就一直斷著(對正在開機的設備是會出事的那種)。 */
@@ -1270,6 +1289,7 @@ if (lnBreak) {
 	lnBreak.onclick = function() {
 		flash(lnBreak);
 		if (!ctlReady) { toast('請先完成密碼登入', 'warn'); return; }
+		if (!confirmBreak()) { toast('已取消 Break'); return; }
 		ctlDo('送出 Break', C_BREAK, [2]);
 	};
 }
