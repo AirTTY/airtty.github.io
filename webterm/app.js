@@ -86,6 +86,13 @@ var NUS_TX  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; /* 裝置 → client */
 var CTL_RX  = '6e400004-b5a3-f393-e0a9-e50e24dcca9e'; /* 瀏覽器 → 裝置,write */
 var CTL_TX  = '6e400005-b5a3-f393-e0a9-e50e24dcca9e'; /* 裝置 → 瀏覽器,notify */
 
+/* Web Bluetooth 不揭露協商後的 MTU → 寫入用保守分塊。20 = BLE 4.0 最小
+ * ATT payload,任何協商結果下都安全;打字是單鍵單 byte,只有貼上會走分塊迴圈。
+ * ⚠️ 2026-09-06:這一行曾在改寫上面那段常數註解時**被誤刪**,結果是
+ * sendBytes 每次都拋 ReferenceError ⇒ 鍵盤一個位元組都送不出去、
+ * 裝置端整條 session 沒有任何 AcquireWrite。**動這區塊時逐行對照 git diff**。 */
+var WRITE_CHUNK = 20;
+
 /* 控制訊框:[ver=1][cmd][len][payload…];回應 [ver][cmd|0x80][status][payload…] */
 var CTL_VER = 1;
 var C_BAUD = 0x01, C_DATA = 0x02, C_PARITY = 0x03, C_STOP = 0x04,
@@ -990,11 +997,85 @@ function gattConnectWithRetry(dev, tries) {
 	});
 }
 
+/* ⚠️⚠️ **控制通道的探索絕對不可以擋在主鏈上**(2026-09-06 迴歸,實機打臉)
+ *
+ * v7 第一版把 CTL 的 getCharacteristic ×2 + startNotifications 串在 NUS 之後、
+ * 而 `setStatus / setButtons / say / term.focus / fitRows` 又串在 CTL 之後。
+ * 實機 log:`AcquireNotify(NUS)` 在 :31、`AcquireNotify(CTL)` 在 **:52**
+ * —— 中間 21 秒,主鏈就卡在那裡。後果不是「控制功能慢一點」而是**連不上**:
+ *   `term.focus()` 沒跑 ⇒ 使用者打的字沒有進終端 ⇒ 一個位元組都沒送出
+ *   ⇒ 裝置端整條 session **沒有任何 AcquireWrite** ⇒ 30 秒後 wsbridge 密碼逾時斷線。
+ * 線上 v6 正常、v7 掛掉,差別就在這條鏈。
+ *
+ * ∴ 鐵律:**主鏈只做 NUS**,做完立刻把畫面與焦點交還使用者(與 v6 逐行相同);
+ * 控制通道**另外排隊、延後、逾時、全程 catch**,失敗只是少了功能,絕不影響終端。 */
+
+var CTL_DISCOVER_DELAY_MS = 1500;  /* 等密碼提示與前幾包序列輸出先流完再碰 GATT */
+var CTL_STEP_TIMEOUT_MS = 5000;    /* 單一 GATT 步驟的上限,掛住就放棄控制通道 */
+
+/* 連線世代:每次連線 +1。控制通道的探索是非同步的,若使用者在探索途中斷線
+ * 或重連,舊那輪的結果必須作廢 —— 否則會把**上一條連線**的特徵值物件
+ * 掛到新狀態上,按鈕看起來能按、實際寫到已死的 GATT。 */
+var connGen = 0;
+
+/* 這兩個旗標只是「同一種錯誤只吵一次」,避免每包資料都洗一行提示 */
+var termWriteFailed = false, logAppendFailed = false;
+
+function withTimeout(promise, ms, label) {
+	return new Promise(function(resolve, reject) {
+		var done = false;
+		var t = setTimeout(function() {
+			if (!done) { done = true; reject(new Error('timeout:' + label)); }
+		}, ms);
+		promise.then(function(v) {
+			if (done) return;
+			done = true; clearTimeout(t); resolve(v);
+		}, function(e) {
+			if (done) return;
+			done = true; clearTimeout(t); reject(e);
+		});
+	});
+}
+
+/* 背景補上控制通道。**永遠不 throw 給呼叫端**,任何失敗都只是「這台沒有控制功能」。 */
+function setupControlChannel(svc, gen) {
+	if (!svc) return;
+	withTimeout(Promise.all([
+		svc.getCharacteristic(CTL_RX).catch(function() { return null; }),
+		svc.getCharacteristic(CTL_TX).catch(function() { return null; })
+	]), CTL_STEP_TIMEOUT_MS, 'discover').then(function(cc) {
+		/* 世代不符 = 已經斷線或重連過,這輪結果作廢 */
+		if (gen !== connGen || !rxChar) return null;
+		if (!cc[0] || !cc[1]) return null;      /* 舊韌體:正常情況,不吵使用者 */
+		ctlRxChar = cc[0];
+		ctlTxChar = cc[1];
+		ctlTxChar.addEventListener('characteristicvaluechanged', function(ev) {
+			var dv = ev.target.value;
+			onCtlFrame(new Uint8Array(
+				dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength)));
+		});
+		return withTimeout(ctlTxChar.startNotifications(),
+			CTL_STEP_TIMEOUT_MS, 'startNotifications').then(function() {
+			if (gen !== connGen) return null;
+			setCtlAvail(true);   /* 到這裡才顯示按鈕:能訂閱才代表真的可用 */
+			return null;
+		});
+	}).catch(function(e) {
+		if (gen !== connGen) return;
+		ctlRxChar = ctlTxChar = null;
+		setCtlAvail(false);
+		/* 只記一行,不用 toast —— 使用者此刻多半正在打密碼,不要蓋畫面 */
+		say('（這台裝置的序列埠控制功能無法使用：' +
+			(e && e.message ? e.message : '探索失敗') + '，終端本身不受影響）');
+	});
+}
+
 function wireUp(server) {
 	var svcRef = null;
+	var gen = connGen;
 
 	return server.getPrimaryService(NUS_SVC).then(function(svc) {
-		svcRef = svc;   /* 控制通道的兩顆特徵值稍後也從這個 service 取 */
+		svcRef = svc;   /* 控制通道稍後從同一個 service 取 */
 		return Promise.all([
 			svc.getCharacteristic(NUS_RX),
 			svc.getCharacteristic(NUS_TX)
@@ -1007,37 +1088,39 @@ function wireUp(server) {
 			/* 複製一份再交出去:xterm 的 write 是排隊非同步處理,
 			 * 而事件裡的 DataView 背後緩衝區由瀏覽器的 BLE 堆疊持有 */
 			var u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
-			term.write(u8);
-			logAppend(u8);
+			/* ⚠️ 畫面優先,而且兩段各自 try —— 這是**唯一**把裝置輸出畫上去的地方,
+			 * 任何一行拋例外都會變成「連上了卻什麼都看不到」這種最難查的症狀
+			 * (2026-09-06 迴歸就長這樣)。側錄/偵測那一側再怎麼壞,
+			 * 都不可以連累終端顯示;壞了就明講一次,不要靜靜吞掉。 */
+			try {
+				term.write(u8);
+			} catch (e) {
+				if (!termWriteFailed) {
+					termWriteFailed = true;
+					say('⚠️ 終端顯示發生錯誤:' + (e && e.message) + '（請回報這行）');
+				}
+			}
+			try {
+				logAppend(u8);
+			} catch (e) {
+				if (!logAppendFailed) {
+					logAppendFailed = true;
+					say('⚠️ 側錄/偵測發生錯誤:' + (e && e.message) +
+						'（終端本身仍可用，請回報這行）');
+				}
+			}
 		});
 		return txChar.startNotifications();
 	}).then(function() {
-		/* ── 控制通道:可有可無 ──
-		 * ⚠️ 這兩顆**一定要容錯**。舊韌體(v1.7 及之前)根本沒有它們,
-		 * getCharacteristic 會 reject;若不接住,整個連線流程會掉進
-		 * catch 變成「連線失敗」—— 那會讓所有舊韌體的使用者連不上,
-		 * 是這一版最容易造成的迴歸。 */
-		return Promise.all([
-			svcRef.getCharacteristic(CTL_RX).catch(function() { return null; }),
-			svcRef.getCharacteristic(CTL_TX).catch(function() { return null; })
-		]);
-	}).then(function(cc) {
-		ctlRxChar = cc[0];
-		ctlTxChar = cc[1];
-		setCtlAvail(!!(ctlRxChar && ctlTxChar));
-		if (!ctlAvail) return null;
-		ctlTxChar.addEventListener('characteristicvaluechanged', function(ev) {
-			var dv = ev.target.value;
-			onCtlFrame(new Uint8Array(
-				dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength)));
-		});
-		return ctlTxChar.startNotifications();
-	}).then(function() {
+		/* ── 主鏈到此為止,與 v6 逐行相同:立刻把畫面與焦點交還使用者 ── */
 		setStatus('已連線:' + (device.name || '(無名裝置,連線後名稱可能稍後出現)'), 'ok');
 		setButtons('connected');
 		say('已連上。輸入連線密碼後即進 console(輸入時不會回顯是正常的)');
 		term.focus();
 		fitRows();
+		/* 控制通道延後到背景做:①讓密碼提示與前幾包輸出先流完,不與 GATT 探索搶
+		 * ②就算它掛住 5 秒逾時,終端早就能用了。刻意**不 return**,不進主鏈。 */
+		setTimeout(function() { setupControlChannel(svcRef, gen); }, CTL_DISCOVER_DELAY_MS);
 	});
 }
 
