@@ -1699,14 +1699,18 @@ rpSlider.addEventListener('input', function() {
 
 /* ══ 遮蔽 ══════════════════════════════════════════════════════════════
  * IP 尾兩節、MAC 裝置碼(留 OUI 利於辨識廠牌)、常見密碼欄位值。
+ * MAC 冒號式與 Cisco 點分式都認;密碼欄位含「型別碼 + hash」寫法
+ * (`secret 5 <hash>` → `secret 5 ****`,型別碼留著可見,後面的 hash 才是要擋的)。
+ * 空白類一律用 [^\S\r\n] 而非 \s,免得一行以 password 結尾時跨行吃掉下一行第一個 token。
  * 只求擋住明顯敏感值 —— 預覽可編輯,最後一道防線是工程師自己的眼睛。
- * 規則與管理介面網頁終端那份逐字相同,兩邊遮出來的結果要一致。 */
+ * ⚠️ 規則與管理介面網頁終端那份**逐字相同**,改任何一邊必同步另一邊,並跑
+ *    OpenWRT repo 的 `scripts/test/mask-sensitive.test.js`(會斷言兩份一致)。 */
 function maskSensitive(text) {
 	return text
 		.replace(/\b(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}\b/g, '$1.x.x')
-		.replace(/\b([0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2})(?:[:-][0-9A-Fa-f]{2}){3}\b/g,
-			'$1:xx:xx:xx')
-		.replace(/\b(password|passwd|secret|community|psk)(\s+|\s*[:=]\s*)\S+/gi, '$1$2****');
+		.replace(/\b([0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2})(?:[:-][0-9A-Fa-f]{2}){3}\b/g, '$1:xx:xx:xx')
+		.replace(/\b([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{2})[0-9A-Fa-f]{2}\.[0-9A-Fa-f]{4}\b/g, '$1xx.xxxx')
+		.replace(/\b(password|passwd|secret|community|psk)([^\S\r\n]+|[^\S\r\n]*[:=][^\S\r\n]*)((?:[0-9][^\S\r\n]+)?)\S+/gi, '$1$2$3****');
 }
 
 /* ══ 維運報告 ══════════════════════════════════════════════════════════

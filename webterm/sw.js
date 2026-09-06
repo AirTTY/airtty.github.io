@@ -20,7 +20,7 @@
  *    使用者按過「↻ 有新版本」之後才會一致,這是刻意的(半路換版會斷連線)。
  *    每次 bump 也要在同目錄 CHANGELOG.md 補一段,使用者點得到。
  */
-const CACHE_VERSION = 'v8';
+const CACHE_VERSION = 'v9';
 const CACHE_NAME = 'airtty-webterm-' + CACHE_VERSION;
 
 /* app shell:離線要能完整開起來的最小集合。
