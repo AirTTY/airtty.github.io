@@ -419,11 +419,13 @@ function ctlDo(label, cmd, payload, onOk) {
 }
 
 /* Break 送出前的確認。
- * ⚠️ **為什麼 Break 要確認、而其他線路設定不用**(2026-09-06 實測後補):
- * 拿一台 FortiGate-60F 實測,BREAK 讓它進入 **Linux magic SysRq** 模式 ——
- * 畫面出現 `SysRq : HELP : loglevel(0-9) reBoot Crash …`,此時**下一個按鍵**
- * 就可能是 `b`(立刻重開)或 `c`(故意 panic)。在正式防火牆上誤按一次 Break
- * 之後隨手敲個鍵,就會把生產設備弄掛。
+ * ⚠️ **為什麼 Break 要確認、而其他線路設定不用**:
+ * Break 的正當用途是**中斷 Cisco 設備的開機流程進 ROMMON**(開機頭約 60 秒內送出),
+ * 用來做密碼還原、換 image、改 config-register。問題出在**對運作中的設備誤送**:
+ * 若該台的 config-register **沒有設成「忽略 Break」**(bit 8 被清掉,例如 0x2100/
+ * 0x2101 —— 密碼還原之後常有人忘了改回 0x2102),那一下 Break 會讓設備**當場掉進
+ * ROMMON、停止轉送所有流量**,而且要有人到 console 前面敲 `reset` 或 `boot`
+ * 才回得來 —— 遠端救不了。
  * 這與「多行貼上先確認」是同一條紀律:**會對正式設備造成不可逆後果的動作,
  * 一律先問**。換鮑率頂多看不到字(改回來就好),所以不問。
  *
@@ -441,11 +443,10 @@ function confirmBreak() {
 	if (!breakConfirmOn()) return true;
 	return window.confirm(
 		'即將送出序列 Break 訊號（拉低 250 毫秒）。\n\n' +
-		'⚠️ 這是給「開機時中斷、進 ROM monitor／SysRq」用的訊號，' +
-		'不是一般按鍵。\n\n' +
-		'實測：FortiGate 這類 Linux 設備收到後會進入 SysRq 模式，' +
-		'接下來你敲的任何一個鍵都可能是「重開機」或「當機」指令 —— ' +
-		'送出後請先看清楚畫面再打字。\n\n' +
+		'⚠️ 這是給「開機時中斷、進 Cisco ROMMON」用的訊號，不是一般按鍵。\n\n' +
+		'對運作中的設備誤送會出事：Cisco 設備若沒把 config-register 設成忽略 Break' +
+		'（例如密碼還原後忘了改回 0x2102），收到 Break 會當場掉進 ROMMON、' +
+		'停止轉送所有流量，要有人到 console 前面敲 reset 或 boot 才回得來。\n\n' +
 		'若你需要快速連按 Break（有些設備的 Break 時間窗很短），' +
 		'可在 ⚙ 線路面板關閉此確認。\n\n確定要送出嗎？');
 }
