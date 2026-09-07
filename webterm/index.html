@@ -157,7 +157,22 @@ a { color: var(--accent); }
 }
 #vendorRow.show { display: flex; }
 #vendorRow > * { flex: 0 0 auto; }
-#vendorLabel { font-size: .85em; color: var(--dim); padding-right: .2em; }
+#vendorRow .vlabel { font-size: .85em; color: var(--dim); padding-right: .2em; }
+/* 廠牌下拉：自動偵測會誤判（#108），所以就地給一個可覆寫的選單。
+   樣式沿用 .sheet select 那組（不寫規則的話是 UA 預設白底，在深色頁面上很刺眼），
+   高度保留 40px（手指可靠命中的下限）。
+   ⚠️ position:sticky —— 這排是 nowrap 橫捲，360px 寬的手機上光是下拉 + 第一顆
+   指令鈕就頂到邊；釘在左緣才不會把「現在是哪一家」捲出視窗。背景色不可省，
+   否則捲過去的按鈕會透在下拉底下。 */
+#vendorSel {
+	font: inherit; font-size: .88em; color: var(--fg); background: #2e2e36;
+	border: 1px solid var(--border); border-radius: 6px;
+	min-height: 40px; padding: .3em .4em; max-width: 15em;   /* 放得下最長的「自動偵測（Juniper Junos）」 */
+	position: sticky; left: 0; z-index: 1;
+	/* 這排有 .8em 左內距，sticky 的 left:0 只釘到內容框 → 捲過去的按鈕會從那道
+	   縫隙露出來。用同色 box-shadow 把內距那條補滿（不佔版面、不動 layout）。 */
+	box-shadow: -.85em 0 0 var(--panel);
+}
 #vendorRow button {
 	min-height: 40px; padding: .3em .7em;
 	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88em;
@@ -365,7 +380,7 @@ a { color: var(--accent); }
 			title="進階：按一下之後再敲一個鍵，該鍵會以 Ctrl+它送出（給上面沒列到的罕用組合用）">Ctrl+…</button>
 		<span id="kbHint"></span>
 	</div>
-	<!-- 第二排：常駐入口只放最常用的五個，回放／報告收進 Log 面板裡
+	<!-- 第二排：常駐入口只放最常用的幾個，回放／報告收進 Log 面板裡
 	     （版面上限是兩排；這排不折行、放不下就橫捲）-->
 	<div class="krow scroll">
 		<button id="btnPaste" tabindex="-1" title="從剪貼簿貼上並送出（多行會先確認）">📋 貼上</button>
@@ -380,6 +395,11 @@ a { color: var(--accent); }
 			title="把側錄拉出來當靜態文字看：過濾、搜尋定位、只看警示行；回放與維運報告也在裡面。偵測到警示關鍵字時鈕上會出現 (N⚠)">🔎 Log</button>
 		<button id="btnAI" tabindex="-1"
 			title="把側錄整理成可貼給 AI 的提問內容（自動遮蔽 IP／MAC／密碼），複製後到官方聊天頁貼上。本頁不代送、不存 API key">🤖 AI</button>
+		<!-- 🏷 廠牌：把廠牌快捷鈕那排叫出來（偵測不到廠牌、或按了 ✕ 想找回來時用）。
+		     刻意不做常駐佔位列 —— 沒廠牌時零佔位是全頁原則，這顆是唯一的召喚入口 -->
+		<button id="btnVendor" tabindex="-1" aria-expanded="false" aria-controls="vendorRow"
+			aria-label="顯示廠牌快捷鈕那排"
+			title="叫出廠牌快捷鈕那排：自動偵測看錯了可以自己選廠牌，偵測不到也能手動指定">🏷 廠牌</button>
 		<!-- 線路設定：只有偵測到裝置支援控制通道（韌體 v1.8 起）才顯示。
 		     做成抽屜而不是常駐排——版面上限是兩排，而這些是「偶爾調一次」的東西 -->
 		<button id="btnLine" tabindex="-1" class="hidden"
@@ -387,12 +407,19 @@ a { color: var(--accent); }
 	</div>
 </div>
 
-<!-- 廠牌智慧快捷鈕：偵測到廠牌才出現，按鈕由 app.js 依 VENDORS 表產生。
-     刻意不寫死在 HTML（不像上面的快捷鍵列用 data-seq）—— 這排的內容隨偵測結果變，
-     而且送的是「整行指令 + Enter」不是控制碼，兩者性質不同。 -->
+<!-- 廠牌智慧快捷鈕：偵測到廠牌、或使用者按了工具列的「🏷 廠牌」才出現。
+     按鈕由 app.js 依 VENDORS 表產生，刻意不寫死在 HTML（不像上面的快捷鍵列用 data-seq）
+     —— 這排的內容隨偵測／手動選擇而變，而且送的是「整行指令 + Enter」不是控制碼。
+     ⚠️ 下拉選單（#vendorSel）與 #vendorClose 一樣，是**寫在 HTML 的持久節點**：
+     app.js 每次重繪這排都會把子節點全清掉再接回來，若改成每次動態新建，
+     使用者選的廠牌會被下一次自動偵測（每 2 秒）重設回去。選項內容由 app.js 依 VENDORS 產生。 -->
 <div id="vendorRow" role="group" aria-label="廠牌常用指令">
-	<span id="vendorLabel"></span>
-	<button id="vendorClose" tabindex="-1" aria-label="關閉廠牌快捷鈕" title="關閉這排（本次連線不再顯示）">✕</button>
+	<!-- 這排是 nowrap 橫捲，手機上寬度很緊 → 刻意不放「廠牌：」文字標籤，語意靠 aria-label
+	     （管理介面版桌機版面夠，那邊有保留文字標籤）。選項由 app.js 依 VENDORS 產生。 -->
+	<select id="vendorSel" aria-label="廠牌（自動偵測或手動指定）"
+		title="自動偵測看錯了就自己選 —— 選定後自動偵測不會再蓋掉；選回「自動偵測」會立刻重新判斷一次"></select>
+	<button id="vendorClose" tabindex="-1" aria-label="關閉廠牌快捷鈕"
+		title="關閉這排（自動偵測不會再叫它出來；工具列的「🏷 廠牌」可叫回）">✕</button>
 </div>
 
 <!-- 情境橫幅：同時只顯示一條，沒有情境時零佔位。目前唯一使用者是亂碼偵測 -->

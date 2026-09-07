@@ -150,12 +150,13 @@ var btnFontUp = document.getElementById('btnFontUp');
 var btnLog = document.getElementById('btnLog');
 var btnLogView = document.getElementById('btnLogView');
 var btnAI = document.getElementById('btnAI');
+var btnVendor = document.getElementById('btnVendor');
 
 var elBanner = document.getElementById('ctxBanner');
 var elBannerText = document.getElementById('ctxText');
 var elVendorRow = document.getElementById('vendorRow');
-var elVendorLabel = document.getElementById('vendorLabel');
 var elVendorClose = document.getElementById('vendorClose');
+var elVendorSel = document.getElementById('vendorSel');
 
 var $ = function(id) { return document.getElementById(id); };
 
@@ -725,7 +726,7 @@ function logSince(mark) {
 
 /* ── 廠牌資料表 ────────────────────────────────────────────────────────
  * **單一來源餵兩個功能**(照搬管理介面網頁終端的架構):
- *   ① 廠牌智慧快捷鈕 —— 偵測到誰,就給誰的常用巡檢指令
+ *   ① 廠牌智慧快捷鈕 —— 偵測到(或使用者手動選定)哪家,就給那家的常用巡檢指令
  *   ② 亂碼偵測的提示文字 —— 借 baud 欄講「這家 console 預設多半是多少」
  * ⚠️ 與管理介面版(`terminal.js` 的 `VENDORS`)**逐字同步**,改一邊要改兩邊。
  * ⚠️ `baud` 的用法**依韌體而異**(2026-09-05 更新):韌體 v1.8 起有控制通道 ⇒
@@ -754,7 +755,16 @@ var LOG_ALERT_RE = /(error|fail(ed|ure)?|denied|link[- ]?down|unreachable|duplex
 
 var alertCount = 0;
 var senseTotal = 0, senseBad = 0, garbleShown = false;
-var vendorKey = null, vendorNext = 0, vendorDismissed = false, vendorBaud = null;
+/* 廠牌狀態(#108 起是「自動 + 可手動釘住」兩軌,不是單一個 key):
+ *   vendorAuto  自動偵測最近判定的那一家(null = 還看不出來)
+ *   vendorPin   使用者手動釘住的那一家(null = 自動模式)—— 釘住時偵測照跑但不動畫面
+ *   vendorKey   目前**生效**的那一家(= vendorPin || vendorAuto),指令鈕與亂碼提示都看它
+ *   vendorRendered  指令鈕目前渲染的是哪一家(false = 還沒渲染過);重繪守門用
+ * 三個都是頁面存活期,不隨重連/換埠重置(釘住的值就在下拉上看得見,釘錯一眼可辨),
+ * 也不進任何瀏覽器儲存(理由見「控制通道」那段:記住「你連的是什麼設備」是留線索,
+ * 而省下的只是一次點選;持久釘住還會在下一台設備上靜默壓掉自動偵測,比多點一次更糟)。 */
+var vendorAuto = null, vendorPin = null, vendorKey = null, vendorBaud = null;
+var vendorNext = 0, vendorDismissed = false, vendorRendered = false;
 /* 廠牌偵測用的滾動尾段。
  * 管理介面那邊每 2 秒呼叫一次 `logTail(60)` —— 那會把整個側錄緩衝重新合併+解碼一遍。
  * 手機上緩衝上限 2 MB,每 2 秒全量合併解碼是看得出來的卡頓
@@ -768,7 +778,7 @@ function updateLogBadge() {
 }
 
 function senseStream(txt) {
-	var i, c, bad = 0, ls, now;
+	var i, c, bad = 0, ls, now, v;
 
 	if (!txt) return;
 	/* 亂碼:鮑率不符時解碼出大量 U+FFFD 與控制雜訊。窗口累計,比例高才提示。
@@ -802,55 +812,146 @@ function senseStream(txt) {
 	now = Date.now();
 	if (!vendorNext || now > vendorNext) {
 		vendorNext = now + 2000;
-		for (i = 0; i < VENDORS.length; i++) {
-			if (VENDORS[i].kw.test(senseTail)) { showVendorRow(VENDORS[i]); break; }
-		}
+		v = detectVendor(senseTail);
+		if (v) showVendorRow(v);
 	}
 }
 
 /* ── 廠牌智慧快捷鈕 ────────────────────────────────────────────────────
- * 偵測到廠牌 → 給那家的常用巡檢指令。整排只在偵測到時出現,沒偵測到零佔位。
+ * 偵測到(或使用者手動選定)廠牌 → 給那家的常用巡檢指令。
+ * 整排只在有廠牌、或使用者按了「🏷 廠牌」時才出現,平常零佔位。
  * 送的是「整行指令 + CR」不是控制碼,所以走 sendText 而不是 data-seq 那條路。
  * 全部是唯讀查詢指令(show/get/diagnose/dmesg),不改設定 —— 這是選指令的準則,
- * 誤按一下最多多印一頁東西,不會動到正式設備的組態。 */
-function showVendorRow(v) {
-	var i, btn;
+ * 誤按一下最多多印一頁東西,不會動到正式設備的組態。
+ *
+ * ⚠️ 自動偵測會誤判,所以這排一定要能手動覆寫(#108):比對是「VENDORS 依表格
+ *    順序、第一個命中就定案」,而 Cisco 那條認裸字 `cisco` ⇒ 一台 FortiGate
+ *    只要設定裡有 `set description "to cisco switch"` 就被判成 Cisco IOS,
+ *    而且 cisco 排在 fortinet 前面會贏。誤判的後果是「按下去真的送出去」的
+ *    快捷鈕給錯廠牌,所以下拉選單就放在廠牌標籤旁邊 —— 看到誤判的當下就能改。 */
 
-	if (vendorDismissed || vendorKey === v.key) return;
-	vendorKey = v.key;
-	vendorBaud = v.baud;   /* 餵給亂碼提示用(本頁只當文字,沒有換鮑率的能力) */
+/* 掃一段文字,回傳第一個命中的廠牌(表格順序);沒命中回 null。
+ * 自動偵測與「選回自動偵測時立刻重掃」共用同一支,行為保證一致。 */
+function detectVendor(text) {
+	var i;
 
-	/* 重建整排:先清掉舊廠牌的按鈕,保留 label 與關閉鈕 */
+	if (!text) return null;
+	for (i = 0; i < VENDORS.length; i++)
+		if (VENDORS[i].kw.test(text)) return VENDORS[i];
+	return null;
+}
+
+function vendorByKey(key) {
+	var i;
+
+	if (!key) return null;
+	for (i = 0; i < VENDORS.length; i++)
+		if (VENDORS[i].key === key) return VENDORS[i];
+	return null;
+}
+
+/* 下拉只有兩種值,這是整個功能的狀態模型:
+ *   value === 'auto'  ⇒ 自動模式。偵測結果寫在 auto 那個 option 的**文字**裡
+ *                       (「自動偵測（Fortinet）」),value 本身恆為 'auto'。
+ *   value === 某個 key ⇒ 使用者釘住那一家。
+ * ⚠️ 不要改成「value 跟著偵測結果跑」:①select 已經是 cisco 時再選 cisco,
+ *    瀏覽器不發 change ⇒ 使用者就無法「釘住剛好偵測對的那一家」(偵測對了、
+ *    但不想讓它每 2 秒再飄,是真需求)②畫面上分不出「自動偵測到 Cisco」
+ *    與「我釘了 Cisco」。 */
+function syncVendorSel() {
+	var v = vendorByKey(vendorAuto), carry;
+
+	if (!elVendorSel) return;
+	/* 自動模式下,畫面上那組鈕有可能不是自動偵測來的 —— 釘住某家之後選回
+	 * 「自動偵測」、而當前輸出又掃不出廠牌時,我們刻意維持原本那排不清空
+	 * (使用者上一秒還在用)。那種狀態如果只寫「自動偵測」,使用者無從得知
+	 * 鈕是殘留的 ⇒ 明講「沿用」。 */
+	carry = (!vendorPin && vendorRendered && vendorRendered !== vendorAuto)
+		? vendorByKey(vendorRendered) : null;
+	elVendorSel.options[0].textContent = carry
+		? '自動偵測（沿用 ' + carry.name + '）'
+		: (v ? '自動偵測（' + v.name + '）' : '自動偵測');
+	elVendorSel.value = vendorPin || 'auto';
+}
+
+/* 算出生效廠牌 → 重繪指令鈕。不管顯示/隱藏。 */
+function applyVendor() {
+	var v = vendorByKey(vendorPin || vendorAuto);
+
+	vendorKey = v ? v.key : null;
+	vendorBaud = v ? v.baud : null;   /* 亂碼提示吃這個 —— 手動釘的也算(見 renderGarbleHint) */
+	renderVendorCmds(v);
+}
+
+/* 只負責「這排裡面長什麼樣」;v 為 null ⇒ 只剩下拉與 ✕(沒有指令鈕)。
+ * ⚠️ render 與 reveal 必須拆開:按 ✕ 隱藏後再按「🏷 廠牌」要能叫回來,
+ *    而召喚時廠牌沒變 ⇒ 若召喚也走這支(以 key 守門),會在守門那行 return,
+ *    整排永遠叫不回來(死召喚鈕)。顯示一律走 revealVendorRow()。
+ * ⚠️ 重建會清掉所有子節點 ⇒ 下拉與 ✕ 必須是**寫在 HTML 的持久節點**,清完接回來。
+ *    若改成每次 new 一個 select,使用者選的廠牌會被下一次偵測(每 2 秒)重設回去。 */
+function renderVendorCmds(v) {
+	var key = v ? v.key : null, i, btn, lbl;
+
+	if (vendorRendered === key) return;
+	vendorRendered = key;
 	while (elVendorRow.firstChild) elVendorRow.removeChild(elVendorRow.firstChild);
-	elVendorLabel.textContent = '偵測到 ' + v.name + ' —— 常用:';
-	elVendorRow.appendChild(elVendorLabel);
+	elVendorRow.appendChild(elVendorSel);
 
-	for (i = 0; i < v.cmds.length; i++) {
-		btn = document.createElement('button');
-		btn.className = 'vcmd';
-		btn.tabIndex = -1;
-		/* textContent:廠牌表是我們自己的常數,但一律不碰 innerHTML 是全頁通則 */
-		btn.textContent = v.cmds[i];
-		btn.title = '送出:' + v.cmds[i];
-		btn.addEventListener('click', function() {
-			flash(this);
-			/* 未連線不設 disabled —— 按了跳提示,不做沉默死鈕(同快捷鍵列紀律) */
-			if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
-			if (ctrlArmed) setCtrlArmed(false);
-			sendText(this.textContent + '\r');
-			toast('已送出:' + this.textContent);
-			term.focus();
-		});
-		elVendorRow.appendChild(btn);
+	if (v) {
+		lbl = document.createElement('span');
+		lbl.className = 'vlabel';
+		lbl.textContent = '常用：';
+		elVendorRow.appendChild(lbl);
+		for (i = 0; i < v.cmds.length; i++) {
+			btn = document.createElement('button');
+			btn.className = 'vcmd';
+			btn.tabIndex = -1;
+			/* textContent:廠牌表是我們自己的常數,但一律不碰 innerHTML 是全頁通則 */
+			btn.textContent = v.cmds[i];
+			btn.title = '送出:' + v.cmds[i];
+			btn.addEventListener('click', function() {
+				flash(this);
+				/* 未連線不設 disabled —— 按了跳提示,不做沉默死鈕(同快捷鍵列紀律) */
+				if (!rxChar) { toast(NOT_CONNECTED, 'warn'); return; }
+				if (ctrlArmed) setCtrlArmed(false);
+				sendText(this.textContent + '\r');
+				toast('已送出:' + this.textContent);
+				term.focus();
+			});
+			elVendorRow.appendChild(btn);
+		}
 	}
 	elVendorRow.appendChild(elVendorClose);
+	elVendorRow.classList.toggle('notlive', !rxChar);
+}
+
+/* 無條件顯示這排(不看廠牌有沒有變、也不看現在是不是已經顯示著) */
+function revealVendorRow() {
+	syncVendorSel();
 	elVendorRow.classList.add('show');
 	elVendorRow.classList.toggle('notlive', !rxChar);
+	if (btnVendor) btnVendor.setAttribute('aria-expanded', 'true');
 	setTimeout(fitRows, 0);   /* 多一排 → 終端列數要重算 */
+}
+
+/* 自動偵測命中時的入口(每 2 秒最多一次) */
+function showVendorRow(v) {
+	if (vendorAuto !== v.key) {
+		vendorAuto = v.key;
+		/* 「自動偵測（X）」要跟上 —— 即使現在被釘住或被關掉,
+		 *  使用者下次打開下拉時看到的判定才是新的 */
+		syncVendorSel();
+	} else if (vendorPin || vendorDismissed || elVendorRow.classList.contains('show')) {
+		return;   /* 同一家又沒有狀態變化:什麼都不用做(別每 2 秒重算一次版面) */
+	}
+	if (vendorPin) return;   /* 釘住:偵測照跑,但一律不蓋掉使用者的選擇 */
+	applyVendor();
+	if (!vendorDismissed) revealVendorRow();   /* 按過 ✕ 就不自己叫回來 */
 }
 
 function hideVendorRow() {
 	elVendorRow.classList.remove('show');
+	if (btnVendor) btnVendor.setAttribute('aria-expanded', 'false');
 	setTimeout(fitRows, 0);
 }
 
@@ -863,14 +964,28 @@ function hideVendorRow() {
  * 本頁公開託管、買家手上什麼韌體都有,兩種情況都要能自圓其說
  * (本專案紀律:全頁無沉默死鈕,也不做沒有下一步的提示)。 */
 function showGarbleHint() {
-	var why;
-
 	if (garbleShown) return;
 	garbleShown = true;   /* 本次連線只提示一次,不當跳針保姆 */
-	/* 廠牌表的第二個消費者:偵測得到廠牌就講那家的預設值,講不出來才給通則。
-	 * (亂碼時廠牌多半偵測不到 —— 字都解不開了 —— 但半糊半清的情況確實會發生) */
+	renderGarbleHint();
+}
+
+/* 廠牌換了(手動選或偵測到別家)⇒ 已經顯示中的亂碼提示要跟著換:
+ * 文案與「一鍵試鮑率」的排序都吃 vendorBaud。沒在顯示就什麼都不做 ——
+ * 換廠牌不該自己跳出一條亂碼提示。 */
+function refreshGarbleHint() {
+	if (!garbleShown || !elBanner.classList.contains('show')) return;
+	renderGarbleHint();
+}
+
+function renderGarbleHint() {
+	var why;
+
+	/* 廠牌表的第二個消費者:有廠牌就講那家的預設值,講不出來才給通則。
+	 * (亂碼時廠牌多半偵測不到 —— 字都解不開了 —— 但半糊半清的情況確實會發生;
+	 *  這也是「手動選廠牌」在亂碼時特別有用的原因:偵測不到就自己指定) */
 	why = vendorBaud
-		? '偵測到的設備看起來是 ' + vendorName() + '，其 console 預設多為 ' + vendorBaud
+		? (vendorPin ? '你指定的廠牌是 ' : '偵測到的設備看起來是 ') + vendorName() +
+			'，其 console 預設多為 ' + vendorBaud
 		: '設備常見 9600 或 115200';
 	if (ctlAvail) {
 		showBanner('⚠️ 輸出像亂碼 —— 最常見原因是鮑率不符（' + why +
@@ -923,13 +1038,10 @@ function hideBaudRow() {
 }
 
 function vendorName() {
-	var i;
+	var v = vendorByKey(vendorKey);
 
-	for (i = 0; i < VENDORS.length; i++)
-		if (VENDORS[i].key === vendorKey) return VENDORS[i].name;
-	return '';
+	return v ? v.name : '';
 }
-
 /* 純文字化:拿掉終端控制碼,讓紀錄檔用一般文字編輯器就看得懂。
  * 只做「移除」不做畫面重演 —— 例如 --More-- 用 CR 覆寫的那行會留下空白,
  * 這比假裝重現畫面誠實,也不會誤刪內容。*/
@@ -1327,12 +1439,76 @@ $('ctxClose').addEventListener('click', function() {
 	setTimeout(fitRows, 0);
 });
 
-/* 關掉廠牌快捷鈕:本次連線不再自動跳出來(偵測到別家也不跳)——
- * 使用者已經表達「不想要這排」,再自己冒出來就是煩人。重新整理頁面即復原。 */
+/* 廠牌下拉:自動偵測誤判時就地改(成因見 renderVendorCmds 上面那段)。
+ * 選具體廠牌 = 釘住(偵測繼續跑但不再蓋);選回「自動偵測」= 解除釘住並立刻重掃一次尾段。
+ * 零持久化:選擇只活在本次分頁,重新整理即回「自動偵測」。 */
+elVendorSel.addEventListener('change', function() {
+	var key = elVendorSel.value, v;
+
+	if (key === 'auto') {
+		vendorPin = null;
+		/* 解除釘住 ⇒ 立刻重掃當前尾段,不必等下一個 2 秒節流窗 */
+		v = detectVendor(senseTail);
+		if (v) {
+			vendorAuto = v.key;
+			applyVendor();
+			toast('已改回自動偵測 —— 目前判定 ' + v.name);
+		} else {
+			/* 掃不到就維持現狀,不把這排清成只剩下拉 —— 使用者上一秒還在用那些鈕。
+			 * 刻意不動 vendorKey/vendorBaud/畫面,等下一次偵測命中再換。 */
+			toast('已改回自動偵測 —— 目前的輸出還看不出廠牌,這排先維持不變');
+		}
+	} else {
+		v = vendorByKey(key);
+		if (!v) return;
+		vendorPin = v.key;
+		applyVendor();
+		toast('廠牌已固定為 ' + v.name + '（自動偵測不會再蓋掉）');
+	}
+	syncVendorSel();
+	refreshGarbleHint();   /* 亂碼提示文案與「一鍵試鮑率」的排序跟著新廠牌走 */
+	/* ⚠️ 刻意不呼叫 term.focus():Chrome 桌機在收合的 select 上按方向鍵,
+	 *    每按一下就發一次 change —— 搶走焦點會讓鍵盤使用者選不下去。 */
+});
+
+/* 下拉的選項由 VENDORS 產生 —— 表就是單一來源,不在 HTML 裡再抄一份廠牌名。
+ * 第一個永遠是 'auto'(syncVendorSel 直接改 options[0] 的文字)。 */
+(function initVendorSel() {
+	var i, o;
+
+	if (!elVendorSel) return;
+	o = document.createElement('option');
+	o.value = 'auto';
+	o.textContent = '自動偵測';
+	elVendorSel.appendChild(o);
+	for (i = 0; i < VENDORS.length; i++) {
+		o = document.createElement('option');
+		o.value = VENDORS[i].key;
+		o.textContent = VENDORS[i].name;
+		elVendorSel.appendChild(o);
+	}
+	elVendorSel.value = 'auto';
+})();
+
+/* 🏷 廠牌:把廠牌列叫出來 —— 給「完全偵測不到」與「按了 ✕ 想找回來」用。
+ * 刻意不做常駐佔位列(沒廠牌零佔位是全頁原則),這是唯一的召喚入口。
+ * 用 renderVendorCmds(目前生效的那家) 而不是 applyVendor():只在「還沒渲染過」時
+ * 真的建一次,不會把「解除釘住但掃不到 ⇒ 維持現狀」那批按鈕清掉。 */
+btnVendor.addEventListener('click', function() {
+	flash(btnVendor);
+	vendorDismissed = false;
+	renderVendorCmds(vendorByKey(vendorKey));
+	revealVendorRow();
+	toast(vendorKey ? '廠牌列已顯示' : '廠牌列已顯示 —— 目前看不出廠牌,可自己選');
+});
+
+/* 關掉廠牌快捷鈕:自動偵測不再自己把它叫回來(偵測到別家也不跳)——
+ * 使用者已經表達「不想要這排」,再自己冒出來就是煩人。
+ * 但這是可逆的:⌨ 快捷鍵 → 🏷 廠牌 隨時叫得回來,且叫回來時選的廠牌還在。 */
 elVendorClose.addEventListener('click', function() {
 	vendorDismissed = true;
 	hideVendorRow();
-	toast('已關閉廠牌快捷鈕（重新整理頁面可復原）');
+	toast('已關閉廠牌快捷鈕（要叫回來：⌨ 快捷鍵 → 🏷 廠牌）');
 });
 
 /* ══ 線路設定(控制通道)════════════════════════════════════════════════
