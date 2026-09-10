@@ -509,7 +509,7 @@ a { color: var(--accent); }
 	</header>
 	<div class="sheetbar">
 		<label title="把 IP 後兩節、MAC 裝置碼、password／secret／community 之類欄位的值換成遮罩">
-			<input type="checkbox" id="rpMask" checked>遮蔽 IP／MAC／密碼</label>
+			<input type="checkbox" id="rpMask">遮蔽 IP／MAC／密碼</label>
 		<button id="rpPrint" class="primary" title="開啟瀏覽器列印畫面，可選「另存為 PDF」">🖨 列印／存 PDF</button>
 	</div>
 	<div class="sheetbody"><div id="reportBody"></div></div>
@@ -546,7 +546,7 @@ a { color: var(--accent); }
 					<option value="0">不附輸出</option>
 				</select></label>
 			<label title="IP 只留前兩節、MAC 只留 OUI、password／secret／community 的值換成 ****">
-				<input type="checkbox" id="aiMask" checked>遮蔽敏感資訊</label>
+				<input type="checkbox" id="aiMask">遮蔽敏感資訊</label>
 			<button id="aiPreview" class="primary">🛡 產生送出預覽</button>
 		</div>
 		<div id="aiSendWrap" hidden>
