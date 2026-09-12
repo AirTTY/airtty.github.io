@@ -173,7 +173,7 @@ AirTTY A1 是一台**可攜式無線 console 伺服器**。把 USB 序列（USB-
 
 | 頁面 | 用途 |
 | --- | --- |
-| **連入方式** | 藍牙序列（BLE）、藍牙連入（classic SPP）、SSH 連入、**🤖 AI 助手連線(MCP)** 四張卡：開關與狀態燈、裝置識別碼／名稱／MAC，以及**依作業系統分頁的連線指引**（macOS／Windows／iPhone／Android，見 §5）。最下面那張 **「🤖 AI 助手連線(MCP)」** 卡用來產生／撤銷給筆電上 Claude Code 用的專屬 token（見 §5.7） |
+| **連入方式** | 藍牙序列（BLE）、藍牙連入（classic SPP）、SSH 連入、**🤖 AI 助手連線(MCP)**（v1.8 起）四張卡：開關與狀態燈、裝置識別碼／名稱／MAC，以及**依作業系統分頁的連線指引**（macOS／Windows／iPhone／Android，見 §5）。最下面那張 **「🤖 AI 助手連線(MCP)」** 卡用來產生／撤銷給筆電上 Claude Code 用的專屬 token（見 §5.7） |
 | **網頁終端** | 用瀏覽器連進被接設備的 console（最常用，見 §5.1） |
 | **檔案伺服器** | 把韌體檔上傳到 AirTTY A1，讓設備自己用 TFTP／HTTP／FTP／SCP 抓檔升級 |
 | **網路工具** | 用 CDP／LLDP 看「這台 AirTTY A1 接在哪台交換器的哪個埠」 |
