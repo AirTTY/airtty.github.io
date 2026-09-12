@@ -957,7 +957,7 @@ ssh port1@192.168.10.1
 | 項目 | 要求 |
 | --- | --- |
 | AI 工具 | **Claude Code**（在終端機裡跑的那個）。**以 2.1.269 實測**；更舊的版本可能跳不出下面說的確認視窗 |
-| 筆電環境 | **Node.js 22 或更新版**（安裝指令會用到 `npx`）。版本不夠時程式一啟動就會直接告訴你 |
+| 筆電環境 | **Node.js 22 或更新版**（安裝指令會用到 `npx`）。版本不夠時程式一啟動就會直接告訴你。⚠️ **Claude Code 本身不需要 Node，所以 Windows 機器多半沒裝** —— 先在 PowerShell 執行 `winget install OpenJS.NodeJS.LTS`，重開終端機後用 `node -v` 確認是 22 以上；macOS 用 `brew install node` |
 | **目前不支援** | **Claude Desktop** 與免安裝的**單一執行檔**版本**都還沒支援、也還沒驗證過**，請先用 Claude Code |
 | 韌體 | **v1.8 起**。更舊的韌體「連入方式」頁上不會有這張卡 |
 
