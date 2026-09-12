@@ -1874,19 +1874,73 @@ rpSlider.addEventListener('input', function() {
 });
 
 /* ══ 遮蔽 ══════════════════════════════════════════════════════════════
- * IP 尾兩節、MAC 裝置碼(留 OUI 利於辨識廠牌)、常見密碼欄位值。
+ * IPv4 尾兩節、IPv6 尾兩段、MAC 裝置碼(留 OUI 利於辨識廠牌)、常見密碼欄位值。
  * MAC 冒號式與 Cisco 點分式都認;密碼欄位含「型別碼 + hash」寫法
  * (`secret 5 <hash>` → `secret 5 ****`,型別碼留著可見,後面的 hash 才是要擋的)。
  * 型別碼:Cisco 5/7/9、FortiOS ENC(`set password ENC <hash>` → `set password ENC ****`)。
+ * 2026-09-12(#113)兩處修正:
+ *   ① **子網路遮罩與 Cisco ACL wildcard 不遮** —— `255.255.255.0`、`0.0.0.255`
+ *      這類「連續 1 接連續 0」或「連續 0 接連續 1」的值原樣留著。遮罩本身不敏感,
+ *      遮掉反而看不出是 /24 還是 /16,而網段大小是排障關鍵。
+ *   ② **IPv6 會遮** —— 保留前兩個 hextet(對應 /32 分配),其餘一律 x:
+ *      `2001:db8:1234:5678::1` → `2001:db8:x:x`、`fe80::1` → `fe80:x:x:x`。
+ *      `::/0`、`::1` 不遮;`18:31:33`、`Last input 00:00:01` 這種假陽性靠
+ *      「要嘛帶 ::、要嘛滿八段」擋掉。
+ * 規則順序是契約:IPv4 → MAC 兩條 → **IPv6** → 密碼欄位。IPv6 排在 MAC 之後,
+ * 已遮成 xx 的 MAC 才不會被當成 hextet 二次處理。
  * 空白類一律用 [^\S\r\n] 而非 \s,免得一行以 password 結尾時跨行吃掉下一行第一個 token。
  * 只求擋住明顯敏感值 —— 預覽可編輯,最後一道防線是工程師自己的眼睛。
- * ⚠️ 規則與管理介面網頁終端那份**逐字相同**,改任何一邊必同步另一邊,並跑
- *    OpenWRT repo 的 `scripts/test/mask-sensitive.test.js`(會斷言兩份一致)。 */
+ * ⚠️ 規則與管理介面網頁終端、MCP `lib/mask.js` 那兩份**逐字相同**,改任何一邊必
+ *    同步另兩邊,並跑 OpenWRT repo 的 `scripts/test/mask-sensitive.test.js`
+ *    (會斷言三份一致)。 */
 function maskSensitive(text) {
 	return text
-		.replace(/\b(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}\b/g, '$1.x.x')
+		.replace(/\b(\d{1,3}\.\d{1,3})\.\d{1,3}\.\d{1,3}\b/g, function(hit, head) {
+			/* 子網路遮罩(連續 1 接連續 0)與 Cisco ACL wildcard(連續 0 接連續 1)
+			 * 本身不是敏感資訊,而網段大小(/24 還是 /16)是排障關鍵 ⇒ 原樣保留。
+			 * 有八位元組大於 255 的就不是位址也不是遮罩,照舊遮。 */
+			var oct = hit.split('.');
+			var bits = '';
+			var i, n, b;
+			for (i = 0; i < 4; i++) {
+				n = parseInt(oct[i], 10);
+				if (n > 255) return head + '.x.x';
+				b = n.toString(2);
+				while (b.length < 8) b = '0' + b;
+				bits += b;
+			}
+			if (/^1*0*$/.test(bits) || /^0*1*$/.test(bits)) return hit;
+			return head + '.x.x';
+		})
 		.replace(/\b([0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2})(?:[:-][0-9A-Fa-f]{2}){3}\b/g, '$1:xx:xx:xx')
 		.replace(/\b([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{2})[0-9A-Fa-f]{2}\.[0-9A-Fa-f]{4}\b/g, '$1xx.xxxx')
+		.replace(/(^|[^0-9A-Fa-f:.])([0-9A-Fa-f:]+)(?![0-9A-Fa-f:.])/g, function(hit, pre, tok) {
+			/* IPv6。這條必須排在 MAC 兩條之後:MAC 先遮成 xx,剩下的 hex 群組
+			 * 才不會被當成 hextet。前置捕捉群組代替 lookbehind(LuCI 與 webterm
+			 * 都沒有 build step,不用新語法)。 */
+			var g, colons, hextets, i;
+			/* 前一個字元若把單獨一個冒號併進候選(gateway:2001:db8::1),先還回去 */
+			if (tok.charAt(0) === ':' && tok.charAt(1) !== ':') {
+				pre = pre + ':';
+				tok = tok.slice(1);
+			}
+			/* :: 開頭的是 ::/0、::1、::ffff:v4 這類,不帶站點資訊 ⇒ 不遮
+			 * (::ffff:10.1.2.3 的 IPv4 段已經被上面第一條處理掉了) */
+			if (tok.indexOf('::') === 0) return hit;
+			g = tok.split(':');
+			colons = g.length - 1;
+			hextets = 0;
+			for (i = 0; i < g.length; i++) {
+				if (g[i]) hextets++;
+			}
+			/* 認得出是 IPv6 才遮:要嘛帶 ::,要嘛滿八段(七個冒號)。否則
+			 * 18:31:33、Last input 00:00:01、已經遮好的 MAC 都會被誤傷。 */
+			if (colons < 2 || hextets > 8) return hit;
+			if (tok.indexOf('::') < 0 && colons !== 7) return hit;
+			if (!/[0-9A-Fa-f]/.test(tok)) return hit;
+			/* 保留前兩段(對應 /32 分配),與 IPv4 保留前兩個八位元組同一個尺度 */
+			return pre + (g[0] || 'x') + ':' + (g[1] || 'x') + ':x:x';
+		})
 		.replace(/\b(password|passwd|secret|community|psk)([^\S\r\n]+|[^\S\r\n]*[:=][^\S\r\n]*)((?:(?:[0-9]|ENC)[^\S\r\n]+)?)\S+/gi, '$1$2$3****');
 }
 
@@ -1920,7 +1974,7 @@ function renderReport() {
 		['側錄大小', (logBytes < 1024 ? logBytes + ' 位元組'
 			: Math.round(logBytes / 1024) + ' KB') +
 			(logPushed > logBytes ? '（已達上限，保留最新的部分）' : '')],
-		['敏感資訊', rpMask.checked ? '已遮蔽 IP／MAC／密碼樣式' : '⚠️ 未遮蔽 —— 含完整 IP／MAC']
+		['敏感資訊', rpMask.checked ? '已遮蔽 IPv4／IPv6／MAC／密碼樣式（子網路遮罩留著）' : '⚠️ 未遮蔽 —— 含完整 IP／MAC']
 	];
 	var h1, h2, pre, i, tr, td;
 
