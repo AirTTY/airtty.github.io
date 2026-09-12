@@ -979,8 +979,8 @@ ssh port1@192.168.10.1
 claude mcp add airtty -- npx -y airtty-mcp --host 192.168.10.1 --token <帳號>:<32 個十六進位字元> --mode read-only
 ```
 
-> 🪟 **Windows 的那一行與 macOS／Linux 完全相同**，PowerShell 或命令提示字元都直接貼這一行。
-> **`[未實測]` Windows 尚未實機驗證** —— 貼上執行後請用 `claude mcp list` 確認；若顯示 **Failed to connect**，請照 §8.6 回報給我們。
+> 🪟 **Windows 的那一行與 macOS／Linux 完全相同**，PowerShell 或命令提示字元都直接貼這一行（已在 Windows 實測）。
+> 貼上執行後用 `claude mcp list` 確認顯示 **Connected**；第一次會下載套件，顯示 Failed to connect 就等幾秒再跑一次。仍失敗請照 §8.6 回報。
 > 另外 Windows 10 的預設主控台會把 ✔／✘ 顯示成 `√`／`×`，那是字型問題、不是失敗。
 
 **兩種模式**
