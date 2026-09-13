@@ -264,6 +264,7 @@ v1.8 這一輪的重點：**AI 助手連進 console（MCP）**、**藍牙端的 
 
 ## 支援
 
+- 購買、售前詢問、保固與售後 → **LINE 官方帳號 `@244cwfgm`**（[加好友](https://line.me/R/ti/p/@244cwfgm)）
 - 使用問題、疑難排解、文件錯誤回報 → [**GitHub Issues**](https://github.com/AirTTY/airtty.github.io/issues)
 - 回報問題時請附上：機型（A1／M2）、韌體版本（管理介面頁首可見）、你用的連線方式、
   以及序列轉接頭型號。附上畫面截圖通常能省下好幾輪往返。
