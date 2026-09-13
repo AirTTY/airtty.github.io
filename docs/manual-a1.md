@@ -1361,7 +1361,7 @@ AirTTY A1 的 USB 供電預算有限（設計為 5V/1A）。當藍牙介面卡�
 
 | 通道 | 用途 |
 | --- | --- |
-| **LINE 官方帳號 `@244cwfgm`**（<https://line.me/R/ti/p/@244cwfgm>） | 售前詢問、購買、售後與保固 —— 主要聯絡管道 |
+| **LINE 官方帳號「AirTTY 口袋Console伺服器」`@244cwfgm`**（<https://line.me/R/ti/p/@244cwfgm>） | 售前詢問、購買、售後與保固 —— 主要聯絡管道 |
 | GitHub Issues：<https://github.com/AirTTY/airtty.github.io/issues> | 技術問題與問題回報（公開，方便其他使用者查到相同狀況；該附上哪些資訊見下一節 §8.6） |
 
 ### 8.6 遇到問題怎麼回報
