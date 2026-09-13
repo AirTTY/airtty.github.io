@@ -734,18 +734,58 @@ function logSince(mark) {
  *    通道 ⇒ 退回**只當提示文字**。兩條路都在 showGarbleHint 裡。
  *    ~~舊敘述:「BLE 沒有 RFC 2217,本頁沒有換鮑率的能力,所以不做成按鈕」~~
  * 手冊 §4.5「廠牌預設值表」與本表人工同步。 */
+/* ⚠️ **2026-09-13 起 `kw` 一律「有上下文」且不加 `i` 旗標**(#108 ⑧ 的後續):
+ * 舊版認的是裸字(`/cisco/i`、`/Aruba/i`、`/login:/`)—— 那些字在別家設備的
+ * 設定與 log 裡到處都是(`set description "to cisco switch"`),first-match-wins
+ * 之下一命中就定案 ⇒ 廠牌那排會來回飄。現在每一條都要求**只會出現在該家自己
+ * 輸出裡的上下文**(版本/開機橫幅字串、型號料號、該家獨有的提示符與 syslog 格式);
+ * 不加 `i` 是刻意的:設備自己印的是 CamelCase(`FortiGate`、`ArubaOS`),
+ * 工程師手打的描述多半全小寫(`to fortigate`)⇒ 大小寫本身就是一道便宜的鑑別。
+ * 治「飄」的另一半是 VENDOR_CONFIRM 遲滯(見下),兩個一起才有效。 */
 var VENDORS = [
-	{ key: 'cisco', name: 'Cisco IOS', kw: /cisco|IOS Software|ROMMON/i, baud: '9600',
+	{ key: 'cisco', name: 'Cisco IOS',
+		/* `Cisco IOS/Systems/Nexus/ASA` 是 show version 與開機橫幅的固定字串;
+		 * `IOS Software` 的 \b 擋掉 `BIOS Software`;`rommon 1 >` 與 `%FAC-N-MNEM:`
+		 * (Cisco syslog)是別家沒有的格式;`cisco WS-C2960-24TT-L` 這種料號行只在
+		 * show version 出現。⚠️ 殘留風險:手打描述寫成 `to cisco SW1` 仍會命中。 */
+		kw: /Cisco (IOS|Systems|Nexus|Adaptive Security|Internetwork)|\bIOS[- ]X[ER]\b|\bIOS Software\b|\bNX-OS\b|\bROMMON\b|^rommon \d+ >|\bcisco [A-Z]{2,}[0-9A-Z\/-]*\d|%[A-Z][A-Z0-9_]*-[0-7]-[A-Z0-9_]+:/m,
+		baud: '9600',
 		cmds: [ 'terminal length 0', 'show ip interface brief', 'show logging', 'show running-config', 'show version' ] },
-	{ key: 'junos', name: 'Juniper Junos', kw: /JUNOS|[Jj]uniper/, baud: '9600',
+	{ key: 'junos', name: 'Juniper Junos',
+		/* `JUNOS`/`Junos` 保留大小寫(產品名,描述裡手打多是 `juniper`);
+		 * `{master:0}` 與 `[edit …]` 各自獨占一行,是 Junos 獨有的提示符/模式列。 */
+		kw: /\bJUNOS\b|\bJunos\b|Juniper Networks|^\{(master|backup|primary|secondary|line card)[^}]*\}$|^\[edit[^\]]*\]$/m,
+		baud: '9600',
 		cmds: [ 'set cli screen-length 0', 'show interfaces terse', 'show log messages | last 50', 'show configuration | display set' ] },
-	{ key: 'fortinet', name: 'Fortinet', kw: /Forti(Gate|OS|net)|FGT[0-9-]/i, baud: '9600',
+	{ key: 'fortinet', name: 'Fortinet',
+		/* 產品名一律 CamelCase(`FortiGate`/`FortiOS`);`FGT60FTK…` 是序號開頭;
+		 * `config system …` 在第 0 欄是 FortiOS 設定檔獨有的區塊開頭,
+		 * `# config system ` 則是它的提示符後面直接接指令。 */
+		kw: /\bFortiGate\b|\bFortiOS\b|\bFortiWiFi\b|\bFortiSwitch\b|\bFortinet\b|\bFGT[0-9A-Z]{3,}\b|\bFWF[0-9A-Z]{3,}\b|^config system \w|# config system /m,
+		baud: '9600',
 		cmds: [ 'get system status', 'get system interface physical', 'diagnose sys top 5 20', 'show system interface' ] },
-	{ key: 'aruba', name: 'HPE/Aruba', kw: /Aruba|ProCurve|HPE? Switch/i, baud: '115200',
+	{ key: 'aruba', name: 'HPE/Aruba',
+		/* `ArubaOS`/`Aruba Networks` 是版本字串;`Aruba JL256A`、`HP J9773A` 是
+		 * 開機橫幅裡的料號;`ProCurve`/`HP(E) Switch` 沿用舊條但補 \b。
+		 * ⚠️ 刻意不認裸 `Aruba`(AP 名稱/描述常出現)。 */
+		kw: /\bArubaOS\b|Aruba Networks|\bAruba J[LP]\d{3,}[A-Z]?\b|\bProCurve\b|\bHPE? J\d{4}[A-Z]\b|\bHPE? (Switch|ProCurve|Networking)\b|Hewlett[- ]?Packard/,
+		baud: '115200',
 		cmds: [ 'no page', 'show interfaces brief', 'show logging -r', 'show system' ] },
-	{ key: 'linux', name: 'Linux', kw: /login:|systemd|Ubuntu|Debian|CentOS|GNU\/Linux/, baud: '115200',
+	{ key: 'linux', name: 'Linux',
+		/* 全部是 kernel/init/發行版自己印的固定格式:`Linux version 6.1…`、
+		 * dmesg 的 `[    0.123456] `、`systemd[1]:`、`root@host:~#`。
+		 * ⚠️ 舊版認裸 `login:` —— FortiGate 與 Junos 的登入提示也長這樣,已移除。 */
+		kw: /^Linux version \d|\bsystemd\[\d+\]:|GNU\/Linux|Welcome to (Ubuntu|Debian|Alpine|openSUSE|CentOS)|\bUbuntu \d\d\.\d\d|\bDebian GNU|CentOS (Linux|Stream) release|^\[ *\d+\.\d{6}\] |\broot@[\w.-]+:[~\/]|\bBusyBox v\d|\bOpenWrt\b/m,
+		baud: '115200',
 		cmds: [ 'dmesg | tail -50', 'journalctl -xe --no-pager | tail -50', 'ip a', 'ip route' ] }
 ];
+
+/* 自動偵測的遲滯(#108 ⑧ 後續,2026-09-13):要「換」成別家時,新廠牌必須
+ * **連續這麼多次掃描**都命中才真的切換(掃描間隔 2 秒 ⇒ 3 次 ≈ 6 秒)。
+ * 計的是**掃描次數不是秒數** —— 沒有輸出就不會掃,也就不會累積。
+ * 首次判定(還沒有任何廠牌)不套遲滯:那不是「換」,而且整排本來就沒顯示,
+ * 等 6 秒只是讓功能看起來壞掉。命中消失也**不清空**,維持上一個判定。 */
+var VENDOR_CONFIRM = 3;
 
 /* 警示關鍵字:網路設備 log 常見的錯誤樣式。
  * `%\w+-[0-3]-\w+` 是 Cisco 的 %FACILITY-SEVERITY-MNEMONIC —— 嚴重度只收 0-3
@@ -765,6 +805,8 @@ var senseTotal = 0, senseBad = 0, garbleShown = false;
  * 而省下的只是一次點選;持久釘住還會在下一台設備上靜默壓掉自動偵測,比多點一次更糟)。 */
 var vendorAuto = null, vendorPin = null, vendorKey = null, vendorBaud = null;
 var vendorNext = 0, vendorDismissed = false, vendorRendered = false;
+/* 遲滯用(2026-09-13):候選的那一家、以及它連續命中了幾次掃描。見 gateVendor() */
+var vendorCand = null, vendorHits = 0;
 /* 廠牌偵測用的滾動尾段。
  * 管理介面那邊每 2 秒呼叫一次 `logTail(60)` —— 那會把整個側錄緩衝重新合併+解碼一遍。
  * 手機上緩衝上限 2 MB,每 2 秒全量合併解碼是看得出來的卡頓
@@ -813,7 +855,8 @@ function senseStream(txt) {
 	if (!vendorNext || now > vendorNext) {
 		vendorNext = now + 2000;
 		v = detectVendor(senseTail);
-		if (v) showVendorRow(v);
+		if (v) gateVendor(v);
+		/* 掃不到就什麼都不做 —— 維持上一個判定,不清空(使用者上一秒還在用那些鈕) */
 	}
 }
 
@@ -824,11 +867,14 @@ function senseStream(txt) {
  * 全部是唯讀查詢指令(show/get/diagnose/dmesg),不改設定 —— 這是選指令的準則,
  * 誤按一下最多多印一頁東西,不會動到正式設備的組態。
  *
- * ⚠️ 自動偵測會誤判,所以這排一定要能手動覆寫(#108):比對是「VENDORS 依表格
- *    順序、第一個命中就定案」,而 Cisco 那條認裸字 `cisco` ⇒ 一台 FortiGate
- *    只要設定裡有 `set description "to cisco switch"` 就被判成 Cisco IOS,
- *    而且 cisco 排在 fortinet 前面會贏。誤判的後果是「按下去真的送出去」的
- *    快捷鈕給錯廠牌,所以下拉選單就放在廠牌標籤旁邊 —— 看到誤判的當下就能改。 */
+ * ⚠️ 自動偵測仍可能誤判,所以這排一定要能手動覆寫(#108):比對是「VENDORS 依表格
+ *    順序、第一個命中就定案」。~~2026-09-13 前:Cisco 那條認裸字 `cisco` ⇒ 一台
+ *    FortiGate 只要設定裡有 `set description "to cisco switch"` 就被判成 Cisco
+ *    IOS,而且 cisco 排在 fortinet 前面會贏。~~ → 已改成有上下文的 pattern +
+ *    遲滯(VENDOR_CONFIRM),但 first-match-wins 本身沒變,而且 CDP/LLDP 鄰居輸出
+ *    會印出**對方**的橫幅 —— 沒有任何 pattern 治得了那種。誤判的後果是「按下去
+ *    真的送出去」的快捷鈕給錯廠牌,所以下拉選單就放在廠牌標籤旁邊 —— 看到誤判
+ *    的當下就能改。 */
 
 /* 掃一段文字,回傳第一個命中的廠牌(表格順序);沒命中回 null。
  * 自動偵測與「選回自動偵測時立刻重掃」共用同一支,行為保證一致。 */
@@ -934,7 +980,31 @@ function revealVendorRow() {
 	setTimeout(fitRows, 0);   /* 多一排 → 終端列數要重算 */
 }
 
-/* 自動偵測命中時的入口(每 2 秒最多一次) */
+/* 自動偵測的遲滯閘門(#108 ⑧ 後續,2026-09-13)—— 每 2 秒一次的掃描結果先過這裡:
+ *   · 還沒有任何判定 ⇒ 立刻採用(首次不是「換」,等 6 秒只會像功能壞了)
+ *   · 與目前判定同一家 ⇒ 直接往下(showVendorRow 自己判斷要不要動畫面),候選歸零
+ *   · 換成別家 ⇒ 要連續 VENDOR_CONFIRM 次掃描都是它才切換;中間夾一次別的就重數
+ * 為什麼需要:同一段尾巴每 2 秒重掃一次,兩家的關鍵字若同時落在裡面
+ * (例:Cisco 的設定裡提到 FortiGate、CDP/LLDP 鄰居資訊印出對方的橫幅),
+ * 判定就會來回跳。遲滯把「偶爾掃到」與「這台真的是它」分開。
+ * ⚠️ 釘住(vendorPin)時這裡照跑 —— 擋畫面是 showVendorRow 的事,
+ *    這樣「自動偵測（X）」的文字才會在解除釘住前就先跟上。 */
+function gateVendor(v) {
+	if (!vendorAuto || v.key === vendorAuto) {
+		vendorCand = null;
+		vendorHits = 0;
+		showVendorRow(v);
+		return;
+	}
+	if (vendorCand === v.key) vendorHits++;
+	else { vendorCand = v.key; vendorHits = 1; }
+	if (vendorHits < VENDOR_CONFIRM) return;
+	vendorCand = null;
+	vendorHits = 0;
+	showVendorRow(v);
+}
+
+/* 自動偵測命中時的入口(每 2 秒最多一次,且已過遲滯閘門) */
 function showVendorRow(v) {
 	if (vendorAuto !== v.key) {
 		vendorAuto = v.key;
@@ -1445,6 +1515,9 @@ $('ctxClose').addEventListener('click', function() {
 elVendorSel.addEventListener('change', function() {
 	var key = elVendorSel.value, v;
 
+	/* 使用者親手動過 ⇒ 遲滯的半途計數作廢,不讓舊候選在下一次掃描就翻盤 */
+	vendorCand = null;
+	vendorHits = 0;
 	if (key === 'auto') {
 		vendorPin = null;
 		/* 解除釘住 ⇒ 立刻重掃當前尾段,不必等下一個 2 秒節流窗 */
@@ -1914,10 +1987,16 @@ function maskSensitive(text) {
 		})
 		.replace(/\b([0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2}[:-][0-9A-Fa-f]{2})(?:[:-][0-9A-Fa-f]{2}){3}\b/g, '$1:xx:xx:xx')
 		.replace(/\b([0-9A-Fa-f]{4}\.[0-9A-Fa-f]{2})[0-9A-Fa-f]{2}\.[0-9A-Fa-f]{4}\b/g, '$1xx.xxxx')
-		.replace(/(^|[^0-9A-Fa-f:.])([0-9A-Fa-f:]+)(?![0-9A-Fa-f:.])/g, function(hit, pre, tok) {
+		.replace(/(^|[^0-9A-Fa-f:.])([0-9A-Fa-f:]+)(?![0-9A-Fa-f:]|\.\d)/g, function(hit, pre, tok) {
 			/* IPv6。這條必須排在 MAC 兩條之後:MAC 先遮成 xx,剩下的 hex 群組
 			 * 才不會被當成 hextet。前置捕捉群組代替 lookbehind(LuCI 與 webterm
-			 * 都沒有 build step,不用新語法)。 */
+			 * 都沒有 build step,不用新語法)。
+			 * 尾端前瞻 2026-09-13 修(#113 的已知限制):原本是 (?![0-9A-Fa-f:.]),
+			 * 連「後面接句點」都擋掉 ⇒ 句尾的 `gw is 2001:db8::1.` 整個不遮。
+			 * 改成只擋「句點+數字」—— 那才是內嵌 IPv4(`::ffff:1.2.3.4`),留給
+			 * 上面第一條去遮;句點後面接空白或就是字串結尾的,是普通句子標點,照遮。
+			 * ⚠️ 前瞻仍擋 [0-9A-Fa-f:] ⇒ 回溯永遠不可能成功(退一格必然踩到 hex),
+			 *    所以「擋掉」就是整個候選不匹配,不會退化成遮一半。 */
 			var g, colons, hextets, i;
 			/* 前一個字元若把單獨一個冒號併進候選(gateway:2001:db8::1),先還回去 */
 			if (tok.charAt(0) === ':' && tok.charAt(1) !== ':') {
