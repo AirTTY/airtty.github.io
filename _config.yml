@@ -1,5 +1,5 @@
 title: AirTTY
-description: 可攜式無線 console 伺服器 —— 透過 WiFi 或藍牙連進設備 console
+description: 可攜式無線 console 伺服器 —— 透過 WiFi 或藍牙連進設備 console；韌體 v1.8 起 Claude Code 也能連進來（MCP）
 theme: jekyll-theme-cayman
 
 # webterm/ 是純靜態頁（無 front matter），Jekyll 會原樣輸出，不套用本主題。
