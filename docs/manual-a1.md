@@ -1030,7 +1030,13 @@ AI 每要送一筆指令，**Claude Code 的終端機畫面裡**就會跳出一�
 
 選項只有兩個：**Accept ＝ 送出**、**Decline ＝ 不送**。不必先勾任何格子，直接選就好。
 
-> 📷 *（截圖待補：Claude Code 終端機內的確認視窗）*
+![Claude Code 終端機內的確認視窗](images/14-mcp-confirm-dialog.png)
+
+> ℹ️ 標題引號裡的名稱,就是你當初執行 `claude mcp add <名稱> …` 時取的那個 —— 照儀表板 MCP 卡
+> 複製的那一行會是 `airtty`,上圖是開發機取名 `airtty-m2` 的樣子。看到不一樣的名字不用緊張。
+> 另外,**第一次**用到這個工具時,Claude Code 還會先問一次它自己的權限問題
+> (`Do you want to proceed?` / Yes / No),那是 Claude Code 的機制、不是 AirTTY 的;
+> 答應過之後就只剩上圖這一張表單。
 
 > ⏱ **它會等你 10 分鐘**（600 秒）。超過就視為「不送」，序列線上**一個位元組都不會進去**；AI 會收到「未確認」的回覆並告訴你，再叫它送一次即可。
 >
@@ -1428,7 +1434,8 @@ GitHub Issue 是**公開**的，任何人都看得到，而且**編輯過之後�
 | --- | --- |
 | `images/placeholder-01.png` | 產品外觀與各部位名稱（**實拍照**，非螢幕截圖） |
 | `images/placeholder-02.png` | 各部位與指示燈位置（含頂部藍燈 A/B 與紅燈的實際相對位置；**實拍照**） |
-| `images/placeholder-14.png` | Claude Code 終端機內的確認視窗（`MCP server "airtty" requests your input` 三行內容與 Accept／Decline；**終端機截圖**，需實際觸發一次送指令） |
+
+> ✅ **2026-09-15 已補齊 Claude Code 確認視窗截圖**(`14-mcp-confirm-dialog.png`,實際觸發一次 `send_command` 拍到)。
 
 > ✅ **2026-09-14 已補齊管理介面截圖 10 張**（登入、儀表板總覽、序列裝置卡、網頁終端、指令庫、
 > 唯讀橫幅與接管、Log 檢視器、側錄回放、MCP 卡、上游 WiFi 卡），檔名改為 `NN-說明.png` 形式，
