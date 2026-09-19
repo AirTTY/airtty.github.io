@@ -1116,17 +1116,44 @@ function vendorName() {
  * 只做「移除」不做畫面重演 —— 例如 --More-- 用 CR 覆寫的那行會留下空白,
  * 這比假裝重現畫面誠實,也不會誤刪內容。*/
 var RE_OSC     = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;      /* 視窗標題等 OSC 序列 */
-var RE_CSI     = /\x1b\[[0-9;?<>=!]*[ -/]*[@-~]/g;      /* 顏色、游標移動等 CSI 序列 */
+var RE_CSI     = /\x1b\[[0-9;:?<>=!]*[ -/]*[@-~]/g;     /* 顏色、游標移動等 CSI 序列(參數含 `:` —— 256/24-bit 色碼的子參數用冒號) */
 var RE_CHARSET = /\x1b[()*+][ -/]*[0-9A-Za-z]/g;        /* ESC ( B 之類的字元集指定 */
 var RE_ESC2    = /\x1b[78=>MDEHc]/g;                    /* 存/取游標、小鍵盤模式等 */
 var RE_CTRL    = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;   /* 其餘控制碼(保留 Tab 與換行) */
 
 function toPlainText(raw) {
-	return raw
+	var s, out, i, c;
+
+	s = raw
 		.replace(RE_OSC, '')
 		.replace(RE_CSI, '')
 		.replace(RE_CHARSET, '')
-		.replace(RE_ESC2, '')
+		.replace(RE_ESC2, '');
+	/* 退格(0x08)要**套用**,不能當一般控制碼刪掉。
+	 *
+	 * ⚠️ 2026-09-19 使用者實測抓到(先在 LuCI 網頁終端發現,這裡同一個病):
+	 *    在終端把 `sho ` 用退格修成 `show`,畫面是對的,但側錄/AI 脈絡是 `sho w` ——
+	 *    下面 RE_CTRL 把 0x08 **刪掉**,卻把它本來要擦掉的那個字留著,
+	 *    於是產出「既不是打的、也不是看到的」第三種文字。連續退格更糟:
+	 *    `shoxx\x08\x08w` 會變成 `shoxxw`(被擦掉的與修正後的**都在**)。
+	 *
+	 * 這與本檔「只做移除、不做畫面重演」的原則**不衝突** —— 那條講的是 CR 覆寫
+	 * (`--More--` 那行留白比假裝重現畫面誠實)。退格不是畫面重演,它是行編輯:
+	 * 套用之後得到的就是那一行**實際的內容**。
+	 *
+	 * 單次掃描的堆疊,O(n);輸入是設備吐的原文、跑在瀏覽器主執行緒,不用會有病態輸入的迴圈。
+	 * 行為由 OpenWRT repo `scripts/test/strip-ansi-parity.test.js` 對另外兩份實作釘住。 */
+	if (s.indexOf('\x08') >= 0) {
+		out = [];
+		for (i = 0; i < s.length; i++) {
+			c = s.charAt(i);
+			if (c === '\x08') {
+				if (out.length && out[out.length - 1] !== '\n' && out[out.length - 1] !== '\r') out.pop();
+			} else { out.push(c); }
+		}
+		s = out.join('');
+	}
+	return s
 		.replace(/\r\n/g, '\n')
 		.replace(/\r/g, '\n')
 		.replace(RE_CTRL, '');
