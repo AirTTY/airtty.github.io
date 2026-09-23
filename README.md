@@ -108,10 +108,12 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 
 1. 管理介面 **「連入方式」** 頁最下面的 **「🤖 AI 助手連線(MCP)」** 卡 → 填一個好認的名稱 →
    決定要不要勾 **「允許送指令」** → 按 **「產生 token」**。
-2. 卡片上出現**一行指令**（裝置位址與 token 都已經填好，分 macOS／Linux 與 Windows 兩個分頁）→ 按 **「複製」**。
-3. 在筆電開一個終端機，**原樣貼上**執行。執行完，Claude Code 就多出一組 AirTTY 工具。
+2. 卡片上出現**兩行指令**（裝置位址與 token 都已經填好，分 macOS／Linux 與 Windows 兩個分頁）→ 每行各有 **「複製」**。
+3. 在筆電開一個終端機，**依序、一行一行**貼上執行。第一行只有**以前在這台電腦設定過**（例如撤銷 token 後重產）才需要，第一次設定可略過 ——
+   `claude mcp add` 沒有覆寫選項，舊的 `airtty` 還在時新 token 會寫不進去（`already exists in local config`）。
 
 ```
+claude mcp remove airtty
 claude mcp add airtty -- npx -y airtty-mcp --host 192.168.10.1 --token <帳號>:<token> --mode read-only
 ```
 

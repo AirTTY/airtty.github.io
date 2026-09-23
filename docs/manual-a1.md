@@ -1047,19 +1047,23 @@ ssh port1@192.168.10.1
    - 填一個好認的**名稱（label）**，只收小寫英數與 `-`（例如 `ai-0912`）。
    - **先決定要不要勾「允許送指令」**。⚠️ **這一步就決定了「AI 能不能寫」，產生之後改不了** —— 要從「只看」換成「可送指令」只能重產一組 token。不勾＝AI 只能看；勾了＝AI 可以送指令，**預設每一筆都要你按確認**；要讓它不問直接送，按下「產生 token」之後，在出現的那一塊再勾一次 **「⚠️ 不問直接送」**（見下面的「三種模式」）。
    - 按 **「產生 token」**。
-2. 卡片上會出現**一行指令**（裝置位址與 token 都已經幫你填好），分 **macOS / Linux** 與 **Windows** 兩個分頁，按旁邊的 **「複製」** 整行複製。
+2. 卡片上會出現**兩行指令**（裝置位址與 token 都已經幫你填好），分 **macOS / Linux** 與 **Windows** 兩個分頁，每一行旁邊都有 **「複製」**。
    ⚠️ **這串 token 只顯示這一次**，關掉頁面就看不回來了（裝置上只留雜湊值）。沒複製到就重產一組，不必緊張。
-3. 在筆電上開一個終端機，把那一行**原樣貼上**執行。執行完，Claude Code 就多了一組 AirTTY 工具，你可以直接問它「port1 現在畫面上是什麼？」「這段開機訊息有沒有錯誤？」。
+3. 在筆電上開一個終端機，**依序**貼上執行：
+   - **第一行 `claude mcp remove airtty`**：以前在這台電腦設定過 AirTTY（例如撤銷舊 token 後重新產生）才需要，**第一次設定可以略過**。要在**當初設定的同一個資料夾**執行 —— Claude Code 預設把這組設定綁在執行指令的那個資料夾。
+     > 為什麼要先移掉：`claude mcp add` 沒有「覆寫」這個選項，同名的 `airtty` 已存在時會回 **`MCP server airtty already exists in local config`**，新 token 根本寫不進去，Claude Code 會繼續拿已撤銷的舊 token 去連、一直失敗。
+   - **第二行 `claude mcp add airtty …`**：**原樣貼上**執行。執行完，Claude Code 就多了一組 AirTTY 工具，你可以直接問它「port1 現在畫面上是什麼？」「這段開機訊息有沒有錯誤？」。
 
 ![「連入方式」頁的 🤖 AI 助手連線(MCP) 卡](images/13-connect-mcp-card.png)
 
 指令長這樣（`<帳號>` 與後面那串 token 是卡片幫你填的，**不要自己編**；最後面的 `--mode …` 也會依你勾了哪些格子自動帶上）：
 
 ```
+claude mcp remove airtty
 claude mcp add airtty -- npx -y airtty-mcp --host 192.168.10.1 --token <帳號>:<32 個十六進位字元> --mode read-only
 ```
 
-> 🪟 **Windows 的那一行與 macOS／Linux 完全相同**，PowerShell 或命令提示字元都直接貼這一行（已在 Windows 實測）。
+> 🪟 **Windows 的兩行與 macOS／Linux 完全相同**，**請一行一行分開貼**（不要自己用 `;` 或 `&` 串成一行 —— PowerShell 與命令提示字元的串接符號不一樣，串錯會有一行沒執行），PowerShell 或命令提示字元都直接貼這一行（已在 Windows 實測）。
 > 貼上執行後用 `claude mcp list` 確認顯示 **Connected**；第一次會下載套件，顯示 Failed to connect 就等幾秒再跑一次。仍失敗請照 §8.6 回報。
 > 另外 Windows 10 的預設主控台會把 ✔／✘ 顯示成 `√`／`×`，那是字型問題、不是失敗。
 
