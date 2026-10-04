@@ -1114,42 +1114,104 @@ function vendorName() {
 }
 /* 純文字化:拿掉終端控制碼,讓紀錄檔用一般文字編輯器就看得懂。
  * 只做「移除」不做畫面重演 —— 例如 --More-- 用 CR 覆寫的那行會留下空白,
- * 這比假裝重現畫面誠實,也不會誤刪內容。*/
+ * 這比假裝重現畫面誠實,也不會誤刪內容。
+ * ⚠️ 2026-10-02 更新(N8):上面這條原則**對 BS / 裸 CR / CSI K 不再成立** —— 改成行內游標模擬
+ *    (輸出 = 每行的最終畫面),與 OpenWRT repo 的 MCP `src/airtty-mcp/lib/ansi.js`、
+ *    LuCI `view/airtty/terminal.js` stripAnsi() 同一套語意,詳見 toPlainText 內的註解。
+ *    理由:「只移除」對 BS 的結果是**既不是打的、也不是看到的**第三種文字(進度條數字整段被吃光、
+ *    `shoxx\b\bw` 變 `show` 而畫面是 `showx`);送給 AI 的脈絡必須與畫面一致。
+ *    其餘控制碼(RE_CTRL)仍然只做移除。
+ * 2026-10-02 起 CSI 不再用 regex 先剝(原 RE_CSI 已移除):`ESC[K` 要讓游標模擬看到。 */
 var RE_OSC     = /\x1b\][\s\S]*?(?:\x07|\x1b\\)/g;      /* 視窗標題等 OSC 序列 */
-var RE_CSI     = /\x1b\[[0-9;:?<>=!]*[ -/]*[@-~]/g;     /* 顏色、游標移動等 CSI 序列(參數含 `:` —— 256/24-bit 色碼的子參數用冒號) */
 var RE_CHARSET = /\x1b[()*+][ -/]*[0-9A-Za-z]/g;        /* ESC ( B 之類的字元集指定 */
 var RE_ESC2    = /\x1b[78=>MDEHc]/g;                    /* 存/取游標、小鍵盤模式等 */
-var RE_CTRL    = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;   /* 其餘控制碼(保留 Tab 與換行) */
+var RE_CTRL    = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;   /* 其餘控制碼(保留 Tab 與換行;在游標模擬**之後**才套) */
 
 function toPlainText(raw) {
-	var s, out, i, c;
+	var s, out, cells, col, i, j, n, c, code, mode, k;
 
 	s = raw
 		.replace(RE_OSC, '')
-		.replace(RE_CSI, '')
 		.replace(RE_CHARSET, '')
 		.replace(RE_ESC2, '');
-	/* 退格(0x08)要**套用**,不能當一般控制碼刪掉。
-	 *
-	 * ⚠️ 2026-09-19 使用者實測抓到(先在 LuCI 網頁終端發現,這裡同一個病):
-	 *    在終端把 `sho ` 用退格修成 `show`,畫面是對的,但側錄/AI 脈絡是 `sho w` ——
-	 *    下面 RE_CTRL 把 0x08 **刪掉**,卻把它本來要擦掉的那個字留著,
-	 *    於是產出「既不是打的、也不是看到的」第三種文字。連續退格更糟:
-	 *    `shoxx\x08\x08w` 會變成 `shoxxw`(被擦掉的與修正後的**都在**)。
-	 *
-	 * 這與本檔「只做移除、不做畫面重演」的原則**不衝突** —— 那條講的是 CR 覆寫
-	 * (`--More--` 那行留白比假裝重現畫面誠實)。退格不是畫面重演,它是行編輯:
-	 * 套用之後得到的就是那一行**實際的內容**。
-	 *
-	 * 單次掃描的堆疊,O(n);輸入是設備吐的原文、跑在瀏覽器主執行緒,不用會有病態輸入的迴圈。
+	/* ── 行內游標模擬(2026-10-02,N8)──
+	 * 輸出 = 每行的最終畫面:
+	 *   · 可列印字元寫在游標那一格(覆寫或接在後面),游標右移;
+	 *   · BS(0x08)只是游標左移,行首不動,**不刪字**。
+	 *     歷史:2026-09-19 使用者實測抓到 `sho ` 用退格修成 `show`,側錄/AI 脈絡卻是 `sho w`
+	 *     (當時 RE_CTRL 把 0x08 刪掉、卻留下它要擦掉的字)⇒ 09-19 改成「BS = 刪前一個字元」;
+	 *     10-02 再改成游標左移 —— 「刪字」語意讓進度條最後一筆後面的 BS 把數字整段吃光
+	 *     (OpenWRT repo `docs/plans/n3k-field-issues-analysis.md` §6-6 [實測]);
+	 *   · 裸 `\r` 游標回行首;`\r\n`(含 `\r\r\n`)與 `\n` 是行尾;字串尾端的 `\r` 原樣保留;
+	 *   · CSI `K`(0/1/2)照終端語意清行,其餘 CSI 丟掉;不完整的 CSI 只丟 ESC;
+	 *     參數集合比 MCP 多收 `<>=!`(原 RE_CSI 就收,DA 回應之類),對 MCP 會遇到的輸入結果相同;
+	 *   · 行尾只剪**游標最後停的位置之後**的空白(`--More--` 擦除留下的格子)。
+	 * 單次掃描,O(n);輸入是設備吐的原文、跑在瀏覽器主執行緒。
 	 * 行為由 OpenWRT repo `scripts/test/strip-ansi-parity.test.js` 對另外兩份實作釘住。 */
-	if (s.indexOf('\x08') >= 0) {
+	if (/[\x08\r\x1b]/.test(s)) {
 		out = [];
-		for (i = 0; i < s.length; i++) {
+		cells = [];
+		col = 0;
+		i = 0;
+		n = s.length;
+		while (i < n) {
 			c = s.charAt(i);
-			if (c === '\x08') {
-				if (out.length && out[out.length - 1] !== '\n' && out[out.length - 1] !== '\r') out.pop();
-			} else { out.push(c); }
+			if (c === '\x1b') {
+				if (s.charAt(i + 1) === '[') {
+					j = i + 2;
+					while (j < n && /[0-9;:?<>=!]/.test(s.charAt(j))) j++;
+					mode = s.slice(i + 2, j);
+					while (j < n && s.charAt(j) >= ' ' && s.charAt(j) <= '/') j++;
+					if (j < n && s.charAt(j) >= '@' && s.charAt(j) <= '~') {
+						if (s.charAt(j) === 'K') {
+							if (mode === '' || mode === '0') {
+								if (cells.length > col) cells.length = col;
+							} else if (mode === '1') {
+								for (k = 0; k <= col && k < cells.length; k++) cells[k] = ' ';
+							} else if (mode === '2') {
+								for (k = 0; k < cells.length; k++) cells[k] = ' ';
+							}
+						}
+						i = j + 1;
+						continue;
+					}
+				}
+				i++;
+				continue;
+			}
+			if (c === '\n') {
+				while (cells.length > col && cells[cells.length - 1] === ' ') cells.pop();
+				out.push(cells.join(''), '\n');
+				cells = []; col = 0; i++;
+				continue;
+			}
+			if (c === '\r') {
+				j = i;
+				while (s.charAt(j) === '\r') j++;
+				if (s.charAt(j) === '\n' || j >= n) {
+					while (cells.length > col && cells[cells.length - 1] === ' ') cells.pop();
+					out.push(cells.join(''), j >= n ? '\r' : '\r\n');
+					cells = []; col = 0;
+					i = j >= n ? j : j + 1;
+					continue;
+				}
+				col = 0;
+				i = j;
+				continue;
+			}
+			if (c === '\x08') { if (col > 0) col--; i++; continue; }
+			code = s.charCodeAt(i);
+			if (code >= 0xd800 && code <= 0xdbff && i + 1 < n) {
+				k = s.charCodeAt(i + 1);
+				if (k >= 0xdc00 && k <= 0xdfff) c = s.slice(i, i + 2);
+			}
+			if (col < cells.length) cells[col] = c; else cells.push(c);
+			col++;
+			i += c.length;
+		}
+		if (cells.length) {
+			while (cells.length > col && cells[cells.length - 1] === ' ') cells.pop();
+			out.push(cells.join(''));
 		}
 		s = out.join('');
 	}
