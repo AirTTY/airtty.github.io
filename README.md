@@ -9,6 +9,12 @@
 
 **把設備的 console 變成無線的。**
 
+<p align="center">
+  <img src="docs/images/a1-with-accessories.jpg" width="480" alt="AirTTY A1 主機與隨附配件：USB hub、USB 藍牙介面卡、32GB microSD、原廠充電線與外盒">
+  <br>
+  <sub>AirTTY A1 與隨附配件（彩盒為基礎硬體 Gigastone A4-52ER 的原廠外盒）</sub>
+</p>
+
 AirTTY 是口袋大小的**可攜式 console 伺服器**：把 USB 序列（USB-to-serial）轉接線的一端插在
 AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 console 埠，你就能用**筆電、手機或平板，
 透過 WiFi 或藍牙無線連進那台設備的 console**。
