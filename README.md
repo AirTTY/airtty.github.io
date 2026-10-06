@@ -74,6 +74,12 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 - **🤖 AI 助手（MCP，韌體 v1.8 起）** —— 讓筆電上的 **Claude Code** 直接讀這個 console，
   權限分「只看／每筆先問／不問直接送／實驗室模式」四種，還能指定 AI 只碰哪幾個埠，詳見下面[專節](#ai-mcp)。
 
+<p align="center">
+  <img src="docs/images/06-web-terminal.png" alt="AirTTY 網頁終端：上方是序列參數、送 BREAK、DTR／RTS 控制與快捷鍵列，下方是設備 console 的輸出">
+  <br>
+  <sub>網頁終端連進一台防火牆的 console —— 連線中可改序列參數、送 BREAK、控制 DTR／RTS，還有一排快捷鍵</sub>
+</p>
+
 **其他隨附功能：**
 
 - **雙序列埠，一台顧兩台設備** —— 搭配 USB hub 可同時接兩條 console 線（例如兩條 FTDI），
@@ -81,6 +87,13 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 - **序列裝置全自動發現** —— FTDI / CP210x / CH340 / PL2303 / USB CDC-ACM 驅動皆已內建，
   插上（含熱插拔）即自動辨識晶片型號與 USB ID，儀表板直接長出裝置卡；
   鮑率、資料位元、校驗、停止位元、流量控制**全部在網頁上點選設定**，不必打任何指令。
+
+<p align="center">
+  <img src="docs/images/05-serial-device-card.png" alt="儀表板的序列裝置卡：顯示晶片型號與 USB ID，鮑率等參數用下拉選單設定">
+  <br>
+  <sub>插上 USB 序列轉接線，儀表板自動長出裝置卡 —— 晶片型號、USB ID 一目了然，參數全在網頁點選</sub>
+</p>
+
 - **檔案伺服器** —— 把韌體檔上傳到 AirTTY，讓設備自己用 TFTP／HTTP／FTP／SCP 抓檔升級。
   **v1.8.6 起**網頁上傳支援大檔（單檔預設上限 4 GB，實際受記憶卡剩餘空間限制；斷線可從中斷處續傳），整包映像檔直接從瀏覽器丟上去。
   **v1.8.7 起**設備抓檔統一連 LAN 網段的 `.2`（預設 `192.168.10.2`，改網段會自動跟著變），管理介面與管理 SSH 仍在 `.1`；
@@ -131,6 +144,12 @@ claude mcp add airtty -- npx -y airtty-mcp --host 192.168.10.1 --token <帳號>:
 > ⚠️ **token 只顯示這一次**（裝置上只留雜湊值），沒複製到就重產一組。請把它當密碼保管 ——
 > 拿到「可寫」token 的人＝能對那條序列線寫入的人。也**不要**把含 token 的 `.mcp.json` 提交進 git。
 
+<p align="center">
+  <img src="docs/images/13-connect-mcp-card.png" alt="「連入方式」頁的 AI 助手連線卡：名稱、允許送指令、模式單選、開放給 AI 的埠，以及兩行可複製的指令">
+  <br>
+  <sub>「連入方式」頁的 AI 助手連線卡：產生 token → 選模式、勾埠 → 複製兩行指令（圖中示範的是實驗室模式，一般建議從「每筆先問」開始）</sub>
+</p>
+
 ### 四種模式 —— 授權在產生 token 的當下就決定，程式跑起來之後改不了
 
 | 模式 | AI 能做什麼 |
@@ -141,6 +160,12 @@ claude mcp add airtty -- npx -y airtty-mcp --host 192.168.10.1 --token <帳號>:
 | ⚠️ **實驗室模式**（`--mode lab`，韌體 v1.8.8 + airtty-mcp 0.3.8 起） | 給**已下架或實驗室的設備**：auto 的全部，再加上**阻擋清單不套用**、可送 Ctrl-C／Ctrl-Z／Tab／ESC 與 **Break**（Break 會讓運作中的 Cisco 設備掉進 ROMMON）。**要在產生 token 時勾「允許實驗室模式」**（開關在裝置端，光改指令沒用），而且**一定要指定埠**（`--slot`）—— 送錯埠就是停機 |
 
 模式**刻意不做成 AI 可以呼叫的工具** —— 否則「把我切到不問直接送」會是它第一個提議的事。
+
+<p align="center">
+  <img src="docs/images/14-mcp-confirm-dialog.png" width="632" alt="Claude Code 終端機內的確認視窗：列出要送出的指令、目標埠與序列參數、控制權狀態，以及 Accept／Decline">
+  <br>
+  <sub>「每筆先問」模式：每一筆指令送出前，Claude Code 都會跳出確認視窗，列出指令原文、目標埠與控制權狀態，按 Accept 才送出（標題的 airtty-m2 是新增 MCP 時自訂的名稱）</sub>
+</p>
 
 ### 界線在哪裡
 
