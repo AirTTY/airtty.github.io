@@ -787,11 +787,140 @@ var VENDORS = [
  * 等 6 秒只是讓功能看起來壞掉。命中消失也**不清空**,維持上一個判定。 */
 var VENDOR_CONFIRM = 3;
 
+/* ── 警示行判定 begin(與 webterm app.js 逐位元組同步)── */
 /* 警示關鍵字:網路設備 log 常見的錯誤樣式。
  * `%\w+-[0-3]-\w+` 是 Cisco 的 %FACILITY-SEVERITY-MNEMONIC —— 嚴重度只收 0-3
  * (emergency/alert/critical/error),4 以上是 warning/notification 級的日常噪音。
- * 這是「粗略提示」用的,寧可漏抓也不要洗版;要精準過濾請用檢視器的 /regex/。 */
+ * 這是「粗略提示」用的,寧可漏抓也不要洗版;要精準過濾請用檢視器的 /regex/。
+ * ⚠️ 「這一行算不算警示」一律問 isAlertLine(),不要拿 LOG_ALERT_RE.test() 當結論 ——
+ *    它只適合當「整塊有沒有可能命中」的快篩(isAlertLine 為真 ⇒ LOG_ALERT_RE 一定為真)。 */
 var LOG_ALERT_RE = /(error|fail(ed|ure)?|denied|link[- ]?down|unreachable|duplex mismatch|%\w+-[0-3]-\w+|crit(ical)?|traceback)/i;
+
+/* 數值為 0 的錯誤計數不算警示(2026-10-09 使用者要求:「請排除「0 input errors」」)。
+ * 健康的介面每次 show 都印「0 input errors, 0 CRC, …」「Errors: 0, Drops: 0, …」,以前每行都上紅底、
+ * 計進 ⚠ 數,真正有數字的那幾行反而被淹掉。
+ * 範圍刻意窄:只管 error / fail 這一族(errors、Errored、failed、failures、fails、failover…)
+ * 「值是 0」的計數。denied / unreachable / crit 的 0 計數、沒有數字的標題行(`Input errors:`)、
+ * `Error: None`、`No Errors Logged`、`- buffer failures` 都照舊算警示。
+ * 拿不準的一律當警示(維持改之前的行為):這裡只負責把「明確是 0 計數」的拿掉。
+ * 做法:比對到的計數片語從行裡拿掉,剩下的再用 LOG_ALERT_RE 測一次 —— 同一行還有別的關鍵字
+ * (`0 errors, link down`、`%SYS-2-MALLOCFAIL`、另一個非 0 的計數)就照樣是警示。
+ *  ① 數字在前:`0 input errors`、`0 output buffer failures`、`with 0 errors`、`(0/0/0 errors)`、
+ *     `0 calls to icmp_error`。
+ *     數字與關鍵字之間最多夾 3 個英文字(單一空白隔開),而且停在**第一個**關鍵字
+ *     (`0 errors autoneg failed` 只拿掉 `0 errors`,後面的 failed 照算);
+ *     數字前一格只能是行首、空白或「(」——
+ *     `10 input errors`、`10,000 input errors`、`spi0.0 failed`、`tag#0 FAILED`、`packets:0 errors:12`
+ *     都不會被當成 0。
+ *     ⚠️ 這一支**不看數值**,非 0 的(`5 input error  0 short frame`)也比對,由 stripZeroCounters 的回呼
+ *        原樣留著 —— 先把關鍵字「認領」走,② 才不會把下一欄(short frame)的 0 當成它的值。
+ *     數字是 0、但前面是「英文字 + 單一空白」(`FPC 0 Major Errors`、`Fan 0 failed`、`PEM 0 Input Failure`)
+ *     的是插槽/模組編號,不是計數 ⇒ 也原樣留著;行首、標點後、兩格以上空白(欄位對齊)、`with` 後面才算計數。
+ *  ② 關鍵字在前:`errors: 0`、`Tx_Errors=0`、`rx_crc_errors_phy: 0`、`"rx_errors": 0,`、`Errors (Rx) : 0`、
+ *     `Input error CRC = 0`、`Total failure count ---> 0`、`Transmit Packet Errors........ 0`、
+ *     `Failures: total 0`、`Format errors: 0/0`、`Bit errors      0`、`RX errors 0`、`v6-fail-close 0`、
+ *     `Fail Times(0/5)`。
+ *     關鍵字後面可夾 1~3 個英文字,但這時中間要有「:」「=」「--->」「.....」或兩格以上空白(表格對齊);
+ *     夾的是 code / id / rate / on / at… 這類代碼、識別或介系詞,或單數的 port / slot / member…
+ *     (編號,不是個數;複數的 `Failed ports: 0` 才是計數)就不算(`error code 0`、`failed on port 0`)。
+ *     值只認整串都是 0 的十進位整數(0、00、000;有分隔符號時另認 `0/0`):後面接 `x`(0x0)、
+ *     `.` + 數字(0.5、0.00%)、`:`(00:00:05)、`/` + 非 0(0/3)、`,` + 數字(0,123)、`%` 都不算;
+ *     同一列後面還有非 0 的欄位(`errors   0   12`)也不算。
+ *     0 後面只能是:行尾或 \r(原始串流裡 CR 之後是重畫,等於這一行到此為止)、`,` `.` `;` `)` `]`、
+ *     兩格以上空白或 tab(下一欄)、單一空白 + 數字、
+ *     單一空白 + 下一個 `key:` / `key=`、單一空白 + 下一個「名稱 數字」(ASA 的 `v6-fail-close 0 sctp-drop-override 0`)、
+ *     ` (0.00%)`。單一空白後面接一般英文字的是句子不是計數:`error:0 in libc.so.6`(程式當掉)、
+ *     `failure: 0 attempts remaining`、`ERROR: 0 bytes written`、`PSU2  Failed  0 W` 都照樣是警示。
+ *     `(0/N)` 只在緊貼括號時當成「失敗 0 次/門檻 N」(FortiGate link-monitor 的 `Fail Times(0/5)`);
+ *     `Health check failed (0/3)` 照樣是警示。
+ *     回呼另外把這幾種原樣留著(算警示):
+ *       · 關鍵字是 %FAC-[0-3]-MNEMONIC 的助記詞開頭(`%PLATFORM-3-FAILURE: 0 …`)—— 那是 syslog 嚴重訊息;
+ *       · 關鍵字和代碼、識別黏成一個字(`ErrorCode: 0`、`error_code=0`)—— 同 `error code 0`;
+ *       · 獨立的小寫單數 `error:` 緊貼數字(x86 trap 的 `… sp:7ffd5e6f7a8b error:0`,行尾沒有 ` in <檔名>` 也一樣)——
+ *         那是程式當掉時印的錯誤代碼;
+ *       · 關鍵字黏在別的英文字/數字後面、以單數 Error 結尾又緊接冒號(`KeyError: 0`、`AssertionError: 0 != 1`)——
+ *         那是程式例外的訊息;其餘黏著的(`TcpExtTCPLossFailures 0`、`XfrmInStateProtoError   0`、
+ *         `rxErrors=0`)是計數名稱,照常拿掉;
+ *       · 表格的狀態欄:獨立的關鍵字後面直接空白接 0、中間沒夾字也沒有「:」「=」,而且是 failing
+ *         (smartctl 的 `FAILING_NOW 0`),或是單數的 error / fail / failed / failure 隔兩格以上空白、
+ *         0 後面不是逗號(kubectl 的 `Error      0      0s`)—— 那是狀態格 + 下一欄的讀數。
+ *         代價:單數標籤的計數表(`Failed          0`)也會照樣算警示;複數(`Failures   0`)不受影響。
+ * ⚠️ 不要單獨拿 LOG_ZERO_COUNTER_RE 去 test():① 連非 0 的計數也會比對到,哪些該拿掉是
+ *    stripZeroCounters 的回呼決定的(回呼是定義的一部分);帶 g 旗標的 test() 還會記住 lastIndex。
+ *    回呼靠「恰好兩個捕捉群組」拿到 offset 與原字串 —— 要加群組一律用 (?:…)。
+ * ⚠️ 下面混用 /…/.source(裡面的 \t 是正則語法)與字串('[ \\t]' 要雙反斜線),改的時候別搞混。
+ *    只能用 ES5 正則語法(沒有 lookbehind、具名群組、u/s/y 旗標):LuCI 沒有 build step,
+ *    同一段還要跑在 webterm PWA 的舊版 Android Chrome 上。
+ * 效能:每個重複都有上限或前後字元類互斥,不會災難性回溯;100 KB 病態行 < 50 ms
+ *    (scripts/test/alert-zero-counters.test.js 有量)。 */
+var LOG_ZERO_COUNTER_RE = (function () {
+	/* 不能當「夾的英文字」或「下一個名稱」的字:代碼、識別、單數的編號名詞、比率、介系詞 */
+	var deny = '(?:codes?|ids?|no|num|number|index|type|status|state|level|reason|mask|order|rate|ratio|' +
+		'slot|port|unit|module|member|node|disk|drive|lane|channel|vlan|severity|priority|' +
+		'on|at|in|of|for|from|to|by|since|after|before|while|during|with)\\b';
+	/* 關鍵字後面夾的英文字 */
+	var word = '[ \\t]+(?!' + deny + ')[a-z]{1,30}';
+	/* 「:」「=」「--->」「.....」(點引導線),後面可以先接 total / count(`Failures: total 0`) */
+	var sep = /[ \t]*(?:[:=]|-+>|\.{2,})[ \t]*(?:(?:total|count)[ \t]+)?/.source;
+	/* 0 後面可以接什麼(見上面 ② 的說明);接著再確認同列後面沒有非 0 的欄位 */
+	var after = '(?=\\s*$|[ \\t]*\\r|[;)\\]]|[,.](?:\\s|$)|\\t|[ \\t]{2}|[ \\t](?:\\d|[a-z_][\\w.\\/-]{0,40}[:=]|' +
+		'(?!' + deny + ')[a-z][\\w-]{0,40}[ \\t]+\\d|\\(0+(?:\\.0+)?%\\)))' +
+		/(?![ \t]+(?:0+[ \t]+)*[\d.,]*[1-9])/.source;
+	return new RegExp(
+		/* ① 數字在前(群組 1 = 數字前一格、群組 2 = 數字;是不是 0、是不是編號由 stripZeroCounters 判斷) */
+		/(^|[ \t(])(\d{1,12}(?:[,\/]\d{1,12}){0,4})[ \t](?:[a-z]{1,30}[ \t]){0,3}?[a-z_]{0,30}(?:error|fail)[a-z]{0,30}/.source +
+		/* ② 關鍵字在前(比對到的由回呼再篩一次) */
+		'|' + /(?:error|fail)[\w-]{0,40}"?(?:[ \t]*\([a-z]{1,8}\))?/.source +
+		'(?:(?:' + word + '){0,3}' + sep + /0+(?:\/0+)*/.source + after +
+		'|(?:(?:' + word + '){1,3}[ \\t]{2,}|[ \\t]+)0+' + after +
+		'|(?:' + word + '){0,3}' + /\(0+\/\d{1,9}\)/.source + ')', 'gi');
+})();
+
+/* 把 s 裡「數值為 0 的錯誤計數」換成等長的空白(其餘位置不動,呼叫端可以拿原本的位置切片)。
+ * 換成空白不會拼出新的關鍵字:被換掉的片語至少 6 個字元,`link down` 中間只容許一格。 */
+function stripZeroCounters(s) {
+	return s.replace(LOG_ZERO_COUNTER_RE, function (m, lead, num, at, all) {
+		var i, g;
+		if (num) {                               /* ① 數字在前(② 沒有群組,num 是 undefined) */
+			if (/[1-9,]/.test(num)) return m;    /* 不是 0(含 1,234 這種千分位):留著,關鍵字照算 */
+			if (lead === ' ' || lead === '\t') {
+				/* 數字前面是空白:往回看這段空白之前是什麼。只有一格、前面又是英文字/數字(不是 with)
+				 * ⇒ `FPC 0`、`Fan 0` 這種編號,留著 */
+				i = at - 1;
+				while (i >= 0 && (all.charAt(i) === ' ' || all.charAt(i) === '\t')) i--;
+				if (i >= 0 && at - i < 2 && /\w/.test(all.charAt(i)) &&
+					!/(^|\W)with$/i.test(all.slice(Math.max(0, i - 4), i + 1))) return m;
+			}
+		} else {                                 /* ② 關鍵字在前 */
+			/* %FAC-[0-3]-FAILURE: 0 —— 助記詞本身就是關鍵字開頭,拿掉就破壞嚴重度 0-3 的 syslog 判定 */
+			if (all.charAt(at - 1) === '-' && /%\w+-[0-3]-$/.test(all.slice(Math.max(0, at - 64), at))) return m;
+			/* 黏成一個字的代碼、識別(ErrorCode: 0、error_code=0、failover_id: 0):同 `error code 0`,不是計數 */
+			if (/^(?:error|fail)[a-z]*[_-]?(?:codes?|ids?)(?![a-z])/i.test(m)) return m;
+			/* 獨立的小寫單數 `error:` 緊貼數字:x86 trap 的錯誤代碼(`traps: java[2001] general protection … error:0`,
+			 * 核心沒印 ` in libc.so.6[…]` 時就停在行尾),不是計數。ifconfig 的 `errors:0` 是複數,不受影響 */
+			if (/^error:\d/.test(m) && (at === 0 || /\s/.test(all.charAt(at - 1)))) return m;
+			if (at > 0 && /[a-z0-9]/i.test(all.charAt(at - 1))) {
+				/* 黏在別的英文字/數字後面:單數 Error 緊接冒號的是例外訊息(KeyError: 0、AssertionError: 0 != 1),留著;
+				 * 其餘(TcpExtTCPLossFailures 0、XfrmInStateProtoError  0、rxErrors=0)是計數名稱 */
+				if (/^[\w-]*error:/i.test(m)) return m;
+			} else if ((g = /^([a-z][\w-]*)([ \t]+)0+$/i.exec(m)) &&
+				(/^failing/i.test(g[1]) || (/^(?:error|fail|failed|failure)$/i.test(g[1]) &&
+				/[ \t]{2}|\t/.test(g[2]) && all.charAt(at + m.length) !== ','))) {
+				return m;                        /* 表格的狀態欄:獨立的字 + 空白 + 0(沒夾字、沒有分隔符號) */
+			}
+		}
+		return m.replace(/[\s\S]/g, ' ');        /* 數值為 0 的計數:拿掉 */
+	});
+}
+
+/* 一行算不算警示:有關鍵字,而且拿掉「數值為 0 的錯誤計數」之後還有關鍵字。
+ * s 是單獨一行(呼叫端先依 \n 切好;行尾殘留的 \r、--More-- 退格殘渣都不影響)。
+ * ⚠️ 一定要是**完整的一行**:只拿到前半行時,`Framing errors:` 的值還沒到、`10 input errors` 只剩
+ *    `0 input errors`,判定會錯 —— 逐塊收資料的呼叫端要自己留殘行(見標色器的 keepTail、senseStream)。 */
+function isAlertLine(s) {
+	return LOG_ALERT_RE.test(s) && LOG_ALERT_RE.test(stripZeroCounters(s));
+}
+/* ── 警示行判定 end ── */
 
 var alertCount = 0;
 var senseTotal = 0, senseBad = 0, garbleShown = false;
@@ -814,6 +943,8 @@ var vendorCand = null, vendorHits = 0;
  * ⇒ 改成在資料流這一側維護一段固定長度的尾巴,每塊 O(1),完全不碰主緩衝。
  * 4000 字元 ≈ 50~80 行 console 輸出,涵蓋範圍與 logTail(60) 相當。 */
 var senseTail = '';
+/* 警示計數的殘行:這一塊最後那段還沒換行的字,接到下一塊再判(見 senseStream);斷線時清掉 */
+var senseLine = '';
 
 /* 「🔎 Log」鈕上的警示徽章:有累計就掛 (N⚠),沒有就恢復乾淨字樣 */
 function updateLogBadge() {
@@ -838,13 +969,17 @@ function senseStream(txt) {
 		senseTotal = 0;
 		senseBad = 0;
 	}
-	/* 警示行粗略計數:本塊逐行 test 關鍵字,命中就累加並更新徽章。
-	 * 「粗略」是因為塊邊界可能切斷一行(下一塊的殘行會再算一次)—— 這裡只求
-	 * 「有沒有東西該看」的提示,精確數字看檢視器裡的統計列。開啟檢視器即歸零。 */
-	ls = txt.split('\n');
+	/* 警示行粗略計數:逐行 isAlertLine(數值為 0 的錯誤計數不算,2026-10-09,與 LuCI terminal.js 同步),
+	 * 命中就累加並更新徽章。只判**完整的行**:沒結束的那一段留在 senseLine 接到下一塊 ——
+	 * BLE 一包常只有 20 位元組,`     0 ` | `input errors, 0 CRC` 被切開時,後半段單看像沒有值的關鍵字,
+	 * 健康的 show interfaces 每行都可能多算一次。超過 4096 字元還沒換行的就不等了,照現有內容判一次。
+	 * 這裡只求「有沒有東西該看」的提示,精確數字看檢視器裡的統計列。開啟檢視器即歸零。 */
+	ls = (senseLine + txt).split('\n');
+	senseLine = ls.pop();
+	if (senseLine.length > 4096) { ls.push(senseLine); senseLine = ''; }
 	c = alertCount;
 	for (i = 0; i < ls.length; i++)
-		if (LOG_ALERT_RE.test(ls[i])) alertCount++;
+		if (isAlertLine(ls[i])) alertCount++;
 	/* 只在真的變動時才寫 DOM —— BLE 通知一秒好幾十次,無條件改 textContent
 	 * 等於在資料流熱路徑上每包都做一次版面重算 */
 	if (alertCount !== c) updateLogBadge();
@@ -1462,6 +1597,7 @@ btnConnect.onclick = function() {
 				 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
 				 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
 				ctlRxChar = ctlTxChar = null;
+				senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
 				setCtlAvail(false);
 				hideBaudRow();
 				ctlPending.forEach(function(r) { clearTimeout(r.timer); });
@@ -1790,7 +1926,7 @@ wireLineToggle(lnRTS, C_RTS, 'RTS');
 /* ══ Log 檢視器 ════════════════════════════════════════════════════════
  * 把側錄拉出來當靜態文字看。分工講清楚:
  *   過濾 = 縮小「顯示哪些行」;搜尋 = 在目前顯示的行裡跳著定位,不動顯示範圍。
- * 命中警示關鍵字的行上紅底;搜尋命中淡藍、目前這一個橘底。
+ * isAlertLine() 判定為警示的行上紅底(數值為 0 的錯誤計數不算);搜尋命中淡藍、目前這一個橘底。
  * 每行一律 textContent 寫入,不碰 innerHTML —— 設備輸出是不可信資料,
  * 讓它變成活 DOM 等於把終端變成 XSS 入口。 */
 var lvLines = [];    /* 側錄全文切行 */
@@ -1827,7 +1963,7 @@ function lvRender() {
 	lvCur = 0;
 	for (i = 0; i < lvLines.length; i++) {
 		ln = lvLines[i];
-		hit = LOG_ALERT_RE.test(ln);
+		hit = isAlertLine(ln);
 		if (hit) alerts++;
 		if (only && !hit) continue;
 		if (match && !match(ln)) continue;
@@ -1839,7 +1975,7 @@ function lvRender() {
 		div = document.createElement('div');
 		div.textContent = lvShown[i];
 		/* 基準背景記在 dataset:搜尋著色來來去去,回復時要知道原本長怎樣 */
-		div.dataset.bg = LOG_ALERT_RE.test(lvShown[i]) ? 'rgba(255,80,80,.18)' : '';
+		div.dataset.bg = isAlertLine(lvShown[i]) ? 'rgba(255,80,80,.18)' : '';
 		if (div.dataset.bg) div.style.background = div.dataset.bg;
 		lvDivs.push(div);
 		frag.appendChild(div);

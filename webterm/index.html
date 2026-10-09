@@ -450,7 +450,7 @@ a { color: var(--accent); }
 	<div class="sheetbar">
 		<input type="text" id="lvFilter" class="grow" placeholder="過濾：純文字，或 /regex/i"
 			autocapitalize="off" autocomplete="off" spellcheck="false">
-		<label title="只列出命中警示關鍵字的行（error／fail／denied／link down／Cisco %…-0~3-… 等）">
+		<label title="只列出命中警示關鍵字的行（error／fail／denied／link down／Cisco %…-0~3-… 等；數值為 0 的錯誤計數不算，例如「0 input errors」「errors: 0」）">
 			<input type="checkbox" id="lvAlerts">只看警示行</label>
 		<button id="lvReload" title="重抓側錄（看檢視器開著時新進來的輸出），保留目前過濾條件">↻ 重新整理</button>
 	</div>
