@@ -805,6 +805,7 @@ var senseTotal = 0, senseBad = 0, garbleShown = false;
  * 而省下的只是一次點選;持久釘住還會在下一台設備上靜默壓掉自動偵測,比多點一次更糟)。 */
 var vendorAuto = null, vendorPin = null, vendorKey = null, vendorBaud = null;
 var vendorNext = 0, vendorDismissed = false, vendorRendered = false;
+var vendorTimer = null;   /* 節流窗口內到的資料排的尾掃(見 senseStream) */
 /* 遲滯用(2026-09-13):候選的那一家、以及它連續命中了幾次掃描。見 gateVendor() */
 var vendorCand = null, vendorHits = 0;
 /* 廠牌偵測用的滾動尾段。
@@ -820,7 +821,7 @@ function updateLogBadge() {
 }
 
 function senseStream(txt) {
-	var i, c, bad = 0, ls, now, v;
+	var i, c, bad = 0, ls, now;
 
 	if (!txt) return;
 	/* 亂碼:鮑率不符時解碼出大量 U+FFFD 與控制雜訊。窗口累計,比例高才提示。
@@ -854,10 +855,26 @@ function senseStream(txt) {
 	now = Date.now();
 	if (!vendorNext || now > vendorNext) {
 		vendorNext = now + 2000;
-		v = detectVendor(senseTail);
-		if (v) gateVendor(v);
-		/* 掃不到就什麼都不做 —— 維持上一個判定,不清空(使用者上一秒還在用那些鈕) */
+		senseVendor();
+	} else if (!vendorTimer) {
+		/* 窗口內到的資料也要掃到(2026-10-09 FortiGate 實測,與 LuCI terminal.js 同步):掃描只在資料
+		 * 到達時觸發,登入提示這種單發輸出常是「第一塊回顯觸發掃描、第二塊才是 `FortiGate-60F login:`」
+		 * —— 橫幅落在窗口內被跳過,之後設備安靜 ⇒ 沒有東西會再掃,要再按一次 Enter 才認得廠牌。
+		 * 補一個尾掃:窗口一過就掃一次,仍是每 2 秒最多一次。 */
+		vendorTimer = setTimeout(function () {
+			vendorTimer = null;
+			if (!senseTail) return;
+			vendorNext = Date.now() + 2000;
+			senseVendor();
+		}, vendorNext - now + 1);
 	}
+}
+
+/* 掃本次連線的滾動尾段,命中就送進遲滯閘門;掃不到就什麼都不做 —— 維持上一個判定,
+ * 不清空(使用者上一秒還在用那些鈕)。節流掃與尾掃共用這一支。 */
+function senseVendor() {
+	var v = detectVendor(senseTail);
+	if (v) gateVendor(v);
 }
 
 /* ── 廠牌智慧快捷鈕 ────────────────────────────────────────────────────
