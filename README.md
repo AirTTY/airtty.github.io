@@ -147,7 +147,7 @@ claude mcp add airtty -- npx -y airtty-mcp --host 192.168.10.1 --token <帳號>:
 <p align="center">
   <img src="docs/images/13-connect-mcp-card.png" alt="「連入方式」頁的 AI 助手連線卡：名稱、允許送指令、模式單選、開放給 AI 的埠，以及兩行可複製的指令">
   <br>
-  <sub>「連入方式」頁的 AI 助手連線卡：產生 token → 選模式、勾埠 → 複製兩行指令（圖中示範的是實驗室模式，一般建議從「每筆先問」開始）</sub>
+  <sub>「連入方式」頁的 AI 助手連線卡：產生 token → 選模式、勾埠 → 複製兩行指令（圖中為建議的「每筆先問」模式，token 為示意值）</sub>
 </p>
 
 ### 四種模式 —— 授權在產生 token 的當下就決定，程式跑起來之後改不了
