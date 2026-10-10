@@ -1,0 +1,21 @@
+---
+---
+
+@import "{{ site.theme }}";
+
+// 首頁示範影片(README「示範影片」段):airtty.github.io 用 <video> 直接播放;
+// github.com 的 README 會把 <video> 連同內容整個刪掉,所以 <video> 後面另放一張「封面圖連結」給 github.com 用,
+// 在 Pages 上把它藏起來,避免同一支影片出現兩次。
+.main-content video {
+  display: block;
+  width: 100%;
+  max-width: 720px;
+  height: auto;
+  aspect-ratio: 16 / 9;   // 封面圖載入前就先佔好 16:9 的高度,下面的內容不會跳動
+  margin: 0 auto;
+  background: #000;
+}
+
+.main-content a[href$="#gh-fallback"] {
+  display: none;
+}

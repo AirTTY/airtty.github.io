@@ -23,6 +23,17 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 讀 log、判讀錯誤，需要下指令時由你按確認才送出。權限在產生 token 的當下就決定，隨時可撤銷
 （見下方「[🤖 讓 AI 助手連進 console](#ai-mcp)」）。
 
+<a id="demo"></a>
+
+**▶ 示範影片：值班現場，從失聯到交班**（1 分 55 秒，字幕＋中文旁白；情境為示意，介面畫面取自實機）
+
+<p align="center">
+  <video controls preload="none" playsinline poster="docs/images/demo-video-poster.jpg" width="720" height="405" aria-label="AirTTY A1 示範影片：值班現場，從失聯到交班（1 分 55 秒，字幕＋中文旁白）">
+    <source src="docs/media/airtty-a1-demo.mp4" type="video/mp4">
+  </video>
+  <a href="https://airtty.github.io/docs/media/airtty-a1-demo.mp4#gh-fallback"><img src="docs/images/demo-poster.jpg" width="640" alt="AirTTY A1 示範影片：值班現場，從失聯到交班（點擊播放）"></a>
+</p>
+
 ---
 
 ## 這解決什麼問題
