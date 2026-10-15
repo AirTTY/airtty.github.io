@@ -47,6 +47,13 @@ button:disabled { opacity: .45; cursor: default; }
 button.primary { background: #1c4e8a; border-color: #2a6cb8; }
 button.primary:hover { background: #235f9f; }
 button.active { background: #1c4e8a; border-color: #2a6cb8; }
+/* 選埠（v17）：要連 AirTTY 的哪一個序列埠。樣式比照 #vendorSel（不寫的話是 UA 預設白底，
+   在深色標題列上很刺眼）。連線中改選會先問、再重新連線 —— 見 app.js 的 portSel change。 */
+#portSel {
+	font: inherit; color: var(--fg); background: #2e2e36;
+	border: 1px solid var(--border); border-radius: 6px;
+	padding: .3em .4em;
+}
 #status { font-size: .92em; color: var(--dim); }
 #status.ok { color: var(--ok); }
 #status.err { color: var(--err); }
@@ -308,6 +315,14 @@ a { color: var(--accent); }
 <body>
 <header>
 	<h1>AirTTY 網頁藍牙終端</h1>
+	<!-- 選埠（v17）：AirTTY 有兩個序列埠，藍牙要接哪一個由這裡決定（韌體 v1.8.12 起支援；
+	     較舊韌體固定接 port1，連上後畫面會明講）。只有 port1／port2 兩個選項 ——
+	     A1 就兩個埠，選了不存在的埠裝置也會回「沒有這個埠」。 -->
+	<select id="portSel" aria-label="要連的序列埠"
+		title="要連 AirTTY 的哪一個序列埠（韌體 v1.8.12 起支援；較舊韌體固定連 port1）">
+		<option value="1">port1</option>
+		<option value="2">port2</option>
+	</select>
 	<button id="btnConnect" class="primary">🔗 選擇裝置並連線</button>
 	<button id="btnReconnect" class="hidden">↻ 重新連線</button>
 	<button id="btnDisconnect" class="hidden">✕ 斷線</button>
@@ -324,6 +339,10 @@ a { color: var(--accent); }
 	多台並存時靠近一點依訊號強度判斷，連上後名稱才會出現。
 	連上後輸入裝置的<strong>連線密碼</strong>即進 console
 	—— 出廠預設密碼為 <code>AirTTY</code>（可於管理介面更改；若已更改請用新密碼）。
+	<br>🔌 <strong>要接哪一個序列埠</strong>：連線前在「🔗 選擇裝置並連線」左邊選 <strong>port1／port2</strong>
+	（韌體 <strong>v1.8.12</strong> 起支援；較舊韌體固定接 port1，連上後畫面會說明）。
+	選的埠沒有接轉接線時，畫面會直接告訴你是哪一個埠 —— <strong>不會自動改接另一個埠</strong>，
+	免得你對著另一台設備下指令。
 	<br>🔵 <strong>韌體 v1.7 起，藍牙最多兩人同時連線</strong>，兩人看到的是同一個畫面；
 	但<strong>同時只有一人能打字</strong> —— 先連上的人持有輸入權，他離線後另一人自動接手。
 	滿兩人時裝置<strong>會停止廣播</strong>，第三台就掃不到了（這是刻意設計，不是故障）。

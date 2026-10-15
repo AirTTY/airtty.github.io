@@ -10,9 +10,9 @@
  *   ① 零使用者資料持久化：終端輸出、側錄、你打的指令、AI 問答內容，一律只存在
  *      「本次分頁的記憶體」，關頁即消。全檔沒有任何一行把使用者內容寫進
  *      localStorage / sessionStorage / IndexedDB / cookie。
- *      只有三筆瀏覽器儲存，是「字級」「快捷鍵列展開狀態」「送 Break 前先確認」
- *      三個 UI 偏好（見 LS_FONT / LS_KEYS / LS_BREAK_CONFIRM），值只有數字與
- *      0/1，不含任何使用者內容。
+ *      只有四筆瀏覽器儲存，是「字級」「快捷鍵列展開狀態」「送 Break 前先確認」
+ *      「要連的序列埠」四個 UI 偏好（見 LS_FONT / LS_KEYS / LS_BREAK_CONFIRM / LS_PORT），
+ *      值只有數字與 0/1，不含任何使用者內容。
  *   ② 零對外傳輸：本檔沒有任何對外的網路呼叫。AI 功能走「複製到剪貼簿 +
  *      開新分頁到官方聊天頁」，內容由你自己貼上、自己按送出，本頁不代送、不存 key。
  *      （唯一的例外在 sw.js，而它只對「本站自己的檔案」作用 —— README 有完整說明。）
@@ -59,6 +59,12 @@
  *   not-ready；不是寫入權持有者 → 送出去但沒生效（回 timeout）。
  *   ⚠️「沒生效」**不可以**顯示成成功 —— 使用者會以為換好了，然後對著還是亂碼的
  *   畫面查半天。
+ * - **選埠（port1／port2）：依裝置端韌體版本而異**（與名稱那條同理）。
+ *   **韌體 v1.8.12 起**裝置端等「選埠」命令（或 1.5 秒保底）才接序列埠，選的埠沒接線時
+ *   會先送 0xA2 事件與一行說明再斷線；**v1.8.11 以前**連上就固定接 port1，不認得選埠命令
+ *   （實測回 not-ready 或 bad-frame）→ 本頁照常連、多講一行「固定連 port1」。
+ *   ⚠️ **絕不自動改接另一個埠**：選的埠不通就說不通，讓人自己選 ——
+ *   悄悄落到別台設備，正是 AI 設錯交換器那種事故（OpenWRT repo checklist #233）。
  *
  * 相依：xterm.js v5.x（本目錄自帶）。用到的公開 API 僅 Terminal / write /
  * onData / focus / resize / options / element —— 已對照本目錄這份 bundle 確認。
@@ -100,6 +106,63 @@ var C_BAUD = 0x01, C_DATA = 0x02, C_PARITY = 0x03, C_STOP = 0x04,
 	C_BREAK = 0x05, C_DTR = 0x06, C_RTS = 0x07, C_STATE = 0x10;
 var EV_MODEM = 0xa0, EV_READY = 0xa1;
 
+/* ── 選埠判定 begin(純函式;OpenWRT repo scripts/test/webterm-port-select.test.js 抽出來在 vm 裡跑)── */
+/* 控制通道的「選埠」命令與裝置端事件(韌體 v1.8.12 起):
+ *   送   [1][0x08][1][slot]            slot:1 = port1、2 = port2
+ *   回   [1][0x88][status][slot]       0 = 好,正在接;4 = 這台沒有這個埠;5 = 這條連線已接上別的埠(payload = 目前的埠)
+ *   事件 [1][0xA2][0][slot][reason]    選的埠不通,裝置隨後斷線。reason 1 = 沒有人在聽(沒接線/沒設定)、2 = 一連上就關
+ * ⚠️ 舊韌體(v1.8.11 以前)不認得 0x08:認證前回 status 1(not-ready)、認證後回 3(bad-frame)
+ *    [實測 2026-10-15]。新韌體對選埠**絕不回 1 或 3** ⇒「1 或 3 = 舊韌體」可以當判準;沒回應同樣當舊韌體。 */
+var C_SELECT = 0x08, EV_BACKEND_DOWN = 0xa2;
+var ST_SEL_BADARG = 4, ST_SEL_ALREADY = 5;
+
+/* 埠名。裝置用 0 表示「管理者自訂、不在選埠清單裡的預設埠」(出廠設定不會出現) */
+function portName(slot) {
+	return slot > 0 ? 'port' + slot : '預設埠';
+}
+
+/* 選埠結果分類。r = ctlRequest resolve 的 {status, actual};e = reject 的 Error(兩者擇一)。
+ * 回 { kind, slot }:
+ *   ok          已接受(或本來就接在你選的那個埠)
+ *   unsupported 舊韌體 / 沒回應 —— 照常連,講一行「固定連 port1」
+ *   badslot     這台沒有這個埠 —— 斷線、請改選
+ *   other       裝置已先接上別的埠(slot = 那個埠)—— 不可以就這樣用,要重連
+ *   writefail   命令沒寫進去(GATT 錯誤)。[實測 2026-10-15] 舊韌體 port1 沒接線時 session
+ *               已先被收掉,寫入回 ATT「Writing is not permitted」,約 2.5 秒後才斷線 ——
+ *               所以這時連線**可能還在**,不能當成「已經斷了」不理(見 onSelectResult) */
+function classifySelect(r, e, chosen) {
+	if (e) return { kind: e.message === 'local-timeout' ? 'unsupported' : 'writefail', slot: 0 };
+	if (!r) return { kind: 'unsupported', slot: 0 };
+	if (r.status === 0) return { kind: 'ok', slot: chosen };
+	if (r.status === ST_SEL_BADARG) return { kind: 'badslot', slot: chosen };
+	if (r.status === ST_SEL_ALREADY) {
+		if (r.actual === chosen) return { kind: 'ok', slot: chosen };
+		return { kind: 'other', slot: typeof r.actual === 'number' ? r.actual : 0 };
+	}
+	return { kind: 'unsupported', slot: 0 };   /* 1、3(舊韌體)與任何不認得的狀態 */
+}
+
+/* 0xA2 的 payload → { slot, reason };格式不對回 null(控制通道出事不得波及終端) */
+function parseBackendDown(payload) {
+	if (!payload || payload.length < 2) return null;
+	return { slot: payload[0], reason: payload[1] };
+}
+
+/* 0xA2 的說明。只講裝置**確定知道**的事:哪個埠、沒人在聽 / 一連上就關 */
+function backendDownText(d) {
+	var p = 'AirTTY 的 ' + portName(d.slot);
+
+	if (d.reason === 2)
+		return p + ' 一連上就被關閉（沒有收到任何資料）—— 請確認轉接線，或改選其他埠再連線';
+	return p + ' 目前沒有接序列線（或尚未設定）—— 請確認轉接線，或改選其他埠再連線';
+}
+
+/* 0xA2 之後的狀態列短句 */
+function backendDownStatus(d) {
+	return portName(d.slot) + (d.reason === 2 ? ' 一連上就被關閉' : ' 沒有接序列線');
+}
+/* ── 選埠判定 end ── */
+
 /* 本頁的等待上限刻意比裝置端的 1 秒**長**:這樣「沒生效」一律由裝置端回
  * status 2 來判定,提示訊息只有一個來源;本地逾時只是連線真斷掉時的保險。 */
 var CTL_WAIT_MS = 2500;
@@ -119,6 +182,12 @@ var LS_KEYS = 'airtty.webterm.keysOpen';
  * 它不是線路參數(不會送到裝置、不影響任何設備),而是這個瀏覽器的操作習慣,
  * 所以不受「線路參數不記憶」那條鐵律管。缺值 = 開(安全側預設)。 */
 var LS_BREAK_CONFIRM = 'airtty.webterm.breakConfirm';
+/* 「要連哪一個序列埠」(v17 新增,值只有 1 或 2)。⚠️ 為什麼它可以記、線路參數卻不行:
+ * 線路參數(鮑率等)會**送到裝置、改動正在連的那台設備**,而且記住了等於在第三方
+ * origin 留下「你連的是什麼設備」的線索;選埠只是「這個瀏覽器習慣接哪個孔」——
+ * 和 LS_BREAK_CONFIRM 同類的操作偏好,不帶任何設備或 console 內容。
+ * 讀不到(無痕模式)就回 port1(=裝置的預設埠,與舊版行為相同)。 */
+var LS_PORT = 'airtty.webterm.port';
 var FONT_MIN = 8, FONT_MAX = 24, FONT_DEFAULT = 14;
 
 /* 側錄緩衝上限(**位元組**;v1.7 前這裡是「解碼後字元數」,改存 raw u8 後語意跟著改)。
@@ -199,6 +268,20 @@ var wantDisconnect = false;   /* 區分「使用者按斷線」與「意外斷�
 var writeQueue = Promise.resolve();  /* GATT 同時只能一個操作 → 寫入串行化 */
 var ctrlArmed = false;  /* Ctrl 修飾鍵:等待下一個鍵 */
 
+/* ── 選埠(v17)的逐連線狀態 —— connectFlow 一開始全部歸零 ── */
+var elPortSel = document.getElementById('portSel');
+var portChosen = 1;     /* 這一次連線要接的埠(連線開始時定案;連線中改選 = 重新連線) */
+/* 選埠還沒有結果時先扣住鍵盤 —— 韌體 v1.8.12 起,client 的第一筆資料會讓裝置**直接接預設埠**
+ * (port1),選 port2 的人若在這幾百毫秒內打了字,就會打到 port1 那台。
+ * 只在選 port1 以外時扣:選 port1 時就算先打字,裝置接的也正是 port1,扣了只是讓舊韌體使用者變慢。 */
+var portHold = false;
+var heldBytes = [];
+var backendDown = null; /* 本次連線收到的 0xA2({slot, reason}):斷線訊息據此講原因,不再猜 */
+var dropPlan = null;    /* 我方主動斷線時,斷線事件要怎麼收尾:{ status, reconnect } */
+var autoRetried = false;/* 「裝置先接上別的埠」只自動重連一次,不打成迴圈 */
+var rxBytes = 0;        /* 本次連線收到的序列輸出位元組數 */
+var connectedAt = 0;    /* 本次連線主鏈完成的時間(判「連上就被斷」用) */
+
 function setStatus(text, cls) {
 	elStatus.textContent = text;
 	elStatus.className = cls || '';
@@ -260,6 +343,7 @@ function sendBytes(bytes) {
 	var i;
 
 	if (!rxChar || !bytes || !bytes.length) return;
+	if (portHold) { heldBytes.push(bytes); return; }   /* 選埠還沒結果:先扣住,見 portHold */
 	for (i = 0; i < bytes.length; i += WRITE_CHUNK) {
 		(function(chunk) {
 			writeQueue = writeQueue.then(function() {
@@ -347,6 +431,7 @@ function onCtlFrame(u8) {
 
 	if (cmd === EV_READY) { setCtlReady(true); return; }
 	if (cmd === EV_MODEM) { showModem(payload.length ? payload[0] : 0); return; }
+	if (cmd === EV_BACKEND_DOWN) { onBackendDown(parseBackendDown(payload)); return; }
 
 	actual = null;
 	if (payload.length === 4) {
@@ -364,6 +449,104 @@ function onCtlFrame(u8) {
 		rec.resolve({ status: st, actual: actual });
 		return;
 	}
+}
+
+/* ══ 選埠(v17)══════════════════════════════════════════════════════════
+ * 流程:NUS 訂閱完(主鏈結束)→ 立刻在背景找控制通道 → 送「選埠」→ 依回覆講清楚。
+ * 判定規則在上面「選埠判定」那段純函式;這裡只負責把結果變成畫面與動作。 */
+
+function devLabel() {
+	return device && device.name ? device.name : '(無名裝置,連線後名稱可能稍後出現)';
+}
+
+/* 選埠有結果了:放開(或丟掉)扣住的鍵。keep=false 用在「那些字是要給別的埠的」 */
+function portSettled(keep) {
+	var h = heldBytes, i;
+
+	portHold = false;
+	heldBytes = [];
+	if (!keep) return;
+	for (i = 0; i < h.length; i++) sendBytes(h[i]);
+}
+
+/* 我方主動斷線(選埠失敗),斷線事件依 dropPlan 收尾 */
+function disconnectNow() {
+	if (device && device.gatt && device.gatt.connected) device.gatt.disconnect();
+}
+
+/* 這台不支援選埠(韌體沒有控制通道 / 不認得選埠命令 / 沒回應)⇒ 照常連,明講固定 port1。
+ * 選 port2 的人在等待時打的字**丟掉不送** —— 那是要給 port2 的,不可以打進 port1。 */
+function portUnsupported() {
+	var dropped = heldBytes.length > 0;
+
+	say('這台 AirTTY 的韌體還不支援選埠（v1.8.12 起），目前固定連 port1');
+	if (dropped) say('（剛才等待時打的字沒有送出 —— 那是要給 ' + portName(portChosen) + ' 的）');
+	say('輸入連線密碼後即進 console（輸入時不會回顯是正常的）');
+	setStatus('已連線:' + devLabel() + ' · port1', 'ok');
+	portSettled(portChosen === 1);
+}
+
+function selectPort(gen) {
+	var chosen = portChosen;
+
+	ctlRequest(C_SELECT, [chosen]).then(function(r) {
+		onSelectResult(gen, classifySelect(r, null, chosen), chosen);
+	}, function(e) {
+		onSelectResult(gen, classifySelect(null, e, chosen), chosen);
+	});
+}
+
+function onSelectResult(gen, c, chosen) {
+	var msg;
+
+	if (gen !== connGen || !rxChar) return;   /* 已斷線或重連過:這輪作廢 */
+	if (backendDown) { portSettled(false); return; }   /* 0xA2 已經講過原因,不再疊一層訊息 */
+	if (c.kind === 'ok') {
+		setStatus('已連線:' + devLabel() + ' · ' + portName(chosen), 'ok');
+		say('已連上，正在接到 ' + portName(chosen) + '…　輸入連線密碼後即進 console（輸入時不會回顯是正常的）');
+		portSettled(true);
+		return;
+	}
+	if (c.kind === 'unsupported') { portUnsupported(); return; }
+	portSettled(false);
+	if (c.kind === 'badslot') {
+		dropPlan = { status: '這台 AirTTY 沒有 ' + portName(chosen) };
+		say('這台 AirTTY 沒有設定 ' + portName(chosen) + ' —— 請改選其他埠再連線');
+		disconnectNow();
+		return;
+	}
+	if (c.kind === 'other') {
+		/* 裝置已先接上別的埠(選埠命令晚於裝置的 1.5 秒保底才到)。**不可以就這樣用** ——
+		 * 畫面會是別台設備的 console。重連一次讓選埠先到;還是一樣就停下來交給人。 */
+		msg = '裝置已先接上 ' + portName(c.slot) + '（你選的是 ' + portName(chosen) + '）';
+		if (!autoRetried) {
+			autoRetried = true;
+			dropPlan = { status: '重新連線中…', reconnect: true };
+			say(msg + ' —— 為避免對錯的設備下指令，先中斷，自動重新連線一次…');
+		} else {
+			dropPlan = { status: '沒有接到 ' + portName(chosen) };
+			say(msg + ' —— 為避免對錯的設備下指令，已中斷。請按「重新連線」再試一次');
+		}
+		disconnectNow();
+		return;
+	}
+	/* writefail:選埠命令沒寫進去。連線若已經沒了,交給斷線事件;還連著的話 ——
+	 * 選 port1 無妨(裝置不論新舊接的都是 port1),選別的埠就不能賭,先斷開。 */
+	if (!device || !device.gatt || !device.gatt.connected) return;
+	if (chosen === 1) return;
+	dropPlan = { status: '沒有接到 ' + portName(chosen) };
+	say('選埠命令沒有送到裝置（可能是韌體較舊或藍牙不穩）—— 為避免連到 port1 而不自知，已中斷。' +
+		'可按「重新連線」再試；韌體 v1.8.11 以前的 AirTTY 藍牙只能連 port1');
+	disconnectNow();
+}
+
+/* 裝置說「選的埠不通、即將斷線」(0xA2)。同一條連線只講一次(裝置對晚訂閱者會補送) */
+function onBackendDown(d) {
+	if (!d || backendDown) return;
+	backendDown = d;
+	portSettled(false);
+	setStatus(backendDownStatus(d), 'err');
+	say(backendDownText(d));
 }
 
 /* 找不到控制通道特徵值(舊韌體)→ 整組功能隱藏,不留半套死鈕 */
@@ -1454,7 +1637,13 @@ function gattConnectWithRetry(dev, tries) {
  * ∴ 鐵律:**主鏈只做 NUS**,做完立刻把畫面與焦點交還使用者(與 v6 逐行相同);
  * 控制通道**另外排隊、延後、逾時、全程 catch**,失敗只是少了功能,絕不影響終端。 */
 
-var CTL_DISCOVER_DELAY_MS = 1500;  /* 等密碼提示與前幾包序列輸出先流完再碰 GATT */
+/* ~~1500:等密碼提示與前幾包序列輸出先流完再碰 GATT~~ —— v17 改 0(2026-10-15)。
+ * 韌體 v1.8.12 起裝置端要等「選埠」命令才接序列埠,**沒等到就在 1.5 秒後自己接 port1**;
+ * 這裡若還延後 1500 ms 才開始找控制通道,選埠命令永遠晚到、選 port2 的人每次都會落到 port1。
+ * 而延後的原始理由(讓密碼提示先流完)在新韌體上已不存在 —— 選埠之前根本沒有輸出。
+ * [實測 2026-10-15,bleak/macOS] NUS 訂閱 → CTL 訂閱約 60 ms、選埠寫入再約 60 ms。
+ * ⚠️ 仍然**不進主鏈**(v7 鐵律不變):主鏈做完、畫面交還使用者之後才在背景開始。 */
+var CTL_DISCOVER_DELAY_MS = 0;
 var CTL_STEP_TIMEOUT_MS = 5000;    /* 單一 GATT 步驟的上限,掛住就放棄控制通道 */
 
 /* 連線世代:每次連線 +1。控制通道的探索是非同步的,若使用者在探索途中斷線
@@ -1490,7 +1679,10 @@ function setupControlChannel(svc, gen) {
 	]), CTL_STEP_TIMEOUT_MS, 'discover').then(function(cc) {
 		/* 世代不符 = 已經斷線或重連過,這輪結果作廢 */
 		if (gen !== connGen || !rxChar) return null;
-		if (!cc[0] || !cc[1]) return null;      /* 舊韌體:正常情況,不吵使用者 */
+		if (!cc[0] || !cc[1]) {                 /* 舊韌體(v1.8 以前):正常情況,只講選埠那一行 */
+			portUnsupported();
+			return null;
+		}
 		ctlRxChar = cc[0];
 		ctlTxChar = cc[1];
 		ctlTxChar.addEventListener('characteristicvaluechanged', function(ev) {
@@ -1502,6 +1694,7 @@ function setupControlChannel(svc, gen) {
 			CTL_STEP_TIMEOUT_MS, 'startNotifications').then(function() {
 			if (gen !== connGen) return null;
 			setCtlAvail(true);   /* 到這裡才顯示按鈕:能訂閱才代表真的可用 */
+			selectPort(gen);     /* v17:訂閱好立刻選埠(要搶在裝置的 1.5 秒保底之前) */
 			return null;
 		});
 	}).catch(function(e) {
@@ -1511,6 +1704,9 @@ function setupControlChannel(svc, gen) {
 		/* 只記一行,不用 toast —— 使用者此刻多半正在打密碼,不要蓋畫面 */
 		say('（這台裝置的序列埠控制功能無法使用：' +
 			(e && e.message ? e.message : '探索失敗') + '，終端本身不受影響）');
+		/* 控制通道「有但壞了」(逾時/訂閱失敗)≠ 舊韌體:選埠命令根本沒送出去,
+		 * 同「命令沒寫進去」處理 —— 選 port1 照常、選別的埠就先斷開,不賭 */
+		onSelectResult(gen, { kind: 'writefail', slot: 0 }, portChosen);
 	});
 }
 
@@ -1532,6 +1728,7 @@ function wireUp(server) {
 			/* 複製一份再交出去:xterm 的 write 是排隊非同步處理,
 			 * 而事件裡的 DataView 背後緩衝區由瀏覽器的 BLE 堆疊持有 */
 			var u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+			rxBytes += u8.length;   /* 判「連上就被斷、什麼都沒收到」用(見斷線處理) */
 			/* ⚠️ 畫面優先,而且兩段各自 try —— 這是**唯一**把裝置輸出畫上去的地方,
 			 * 任何一行拋例外都會變成「連上了卻什麼都看不到」這種最難查的症狀
 			 * (2026-09-06 迴歸就長這樣)。側錄/偵測那一側再怎麼壞,
@@ -1556,20 +1753,39 @@ function wireUp(server) {
 		});
 		return txChar.startNotifications();
 	}).then(function() {
-		/* ── 主鏈到此為止,與 v6 逐行相同:立刻把畫面與焦點交還使用者 ── */
-		setStatus('已連線:' + (device.name || '(無名裝置,連線後名稱可能稍後出現)'), 'ok');
+		/* ── 主鏈到此為止:立刻把畫面與焦點交還使用者 ──
+		 * v17:「輸入連線密碼後即進 console」改到選埠有結果時才講(那時才知道接的是哪個埠);
+		 * 這裡先講「正在接哪個埠」。選 port1 以外時鍵盤先扣住(見 portHold)。 */
+		setStatus('已連線:' + devLabel(), 'ok');
 		setButtons('connected');
-		say('已連上。輸入連線密碼後即進 console(輸入時不會回顯是正常的)');
+		connectedAt = Date.now();
+		portHold = portChosen !== 1;
+		say('已連上藍牙，正在接到 ' + portName(portChosen) + '…');
 		term.focus();
 		fitRows();
-		/* 控制通道延後到背景做:①讓密碼提示與前幾包輸出先流完,不與 GATT 探索搶
-		 * ②就算它掛住 5 秒逾時,終端早就能用了。刻意**不 return**,不進主鏈。 */
+		/* 控制通道在背景做:就算它掛住 5 秒逾時,終端早就能用了。刻意**不 return**,不進主鏈。
+		 * (v17 起不再延後,理由見 CTL_DISCOVER_DELAY_MS) */
 		setTimeout(function() { setupControlChannel(svcRef, gen); }, CTL_DISCOVER_DELAY_MS);
 	});
 }
 
+/* 連線中改選埠 / 選埠失敗後的自動重連,與使用者按「重新連線」走同一個入口。
+ * ⚠️ 延後 1 秒才連:裝置端以「藍牙位址」認 session,舊 session 還沒收乾淨時
+ *    新連線的訂閱會被當成重複而拒絕(blebridge「舊 session 尚未收斂,拒絕」)。 */
+var RECONNECT_DELAY_MS = 1000;
+
 function connectFlow(dev) {
 	wantDisconnect = false;
+	/* 逐連線狀態歸零(v17)。connGen 的 +1 是檔頭那段「連線世代」註解一直說有、
+	 * 程式卻從來沒做的事 —— 少了它,上一條連線晚到的選埠結果會被當成這一條的。 */
+	connGen++;
+	portChosen = selectedPort();
+	portHold = false;
+	heldBytes = [];
+	backendDown = null;
+	dropPlan = null;
+	rxBytes = 0;
+	connectedAt = 0;
 	setButtons('connecting');
 	setStatus('連線中…');
 	return gattConnectWithRetry(dev, 3)
@@ -1583,34 +1799,70 @@ function connectFlow(dev) {
 		});
 }
 
+/* 「連上後什麼都沒收到就被斷」的時間窗:舊韌體(v1.8.11 以前)port1 沒接線時,
+ * [實測 2026-10-15] 訂閱完約 2.5 秒就被裝置斷開、一個位元組都沒有。 */
+var EARLY_DROP_MS = 8000;
+
+/* 斷線處理(具名函式:同一個 BluetoothDevice 物件重選時只掛一次 —— 瀏覽器對同一台裝置
+ * 會回同一個物件,匿名函式每次 addEventListener 都會多掛一份,斷線訊息就印兩次,
+ * v17 的自動重連更會連兩次) */
+function onGattDisconnected() {
+	var plan = dropPlan, bd = backendDown;
+	var early = !bd && !plan && !wantDisconnect && rxBytes === 0 &&
+		connectedAt > 0 && (Date.now() - connectedAt) < EARLY_DROP_MS;
+
+	rxChar = txChar = null;
+	/* 控制通道狀態一併歸零:斷線後那些按鈕必須立刻失去作用,
+	 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
+	 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
+	ctlRxChar = ctlTxChar = null;
+	senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
+	setCtlAvail(false);
+	hideBaudRow();
+	ctlPending.forEach(function(r) { clearTimeout(r.timer); });
+	ctlPending = [];
+	portSettled(false);
+	dropPlan = null;
+	if (wantDisconnect) {
+		setStatus('已斷線');
+		setButtons('idle');
+	} else if (plan && plan.reconnect) {
+		setStatus(plan.status);
+		setButtons('connecting');
+		setTimeout(function() { if (device) connectFlow(device); }, RECONNECT_DELAY_MS);
+	} else if (bd) {
+		/* 裝置已經講過原因(0xA2)⇒ **不再猜**「裝置關機/超出距離」 */
+		setStatus(backendDownStatus(bd), 'err');
+		setButtons('dropped');
+		say('藍牙連線已由 AirTTY 結束。換好轉接線、或在上方改選其他埠後，按「重新連線」');
+	} else if (plan) {
+		setStatus(plan.status, 'err');
+		setButtons('dropped');
+	} else if (early) {
+		setStatus('連線中斷', 'err');
+		setButtons('dropped');
+		/* 新韌體在「埠不通」時一定先送 0xA2 ⇒ 走到這裡的多半是舊韌體,而舊韌體藍牙固定接 port1 ——
+		 * 所以這裡寫死 port1,不用你選的那個埠 */
+		say('連上後沒有收到任何輸出就被中斷。常見原因：AirTTY 的 port1 沒有接序列線' +
+			'（韌體 v1.8.11 以前會這樣直接斷線、不說原因），或藍牙連線人數已滿。可按「重新連線」');
+	} else {
+		setStatus('連線中斷', 'err');
+		setButtons('dropped');
+		say('連線中斷(裝置關機/超出距離/藍牙訊號中斷)。可按「重新連線」');
+	}
+}
+
 btnConnect.onclick = function() {
 	if (!envCheck()) return;
+	autoRetried = false;
 	/* service filter:我們的廣播帶 128-bit NUS UUID,直接命中;
 	 * 不用 acceptAllDevices —— chooser 雜訊少、也不多要權限 */
 	navigator.bluetooth.requestDevice({ filters: [{ services: [NUS_SVC] }] })
 		.then(function(dev) {
 			device = dev;
 			/* 意外斷線 → 顯示重連鈕(釘住同一 device,不重開 chooser) */
-			dev.addEventListener('gattserverdisconnected', function() {
-				rxChar = txChar = null;
-				/* 控制通道狀態一併歸零:斷線後那些按鈕必須立刻失去作用,
-				 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
-				 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
-				ctlRxChar = ctlTxChar = null;
-				senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
-				setCtlAvail(false);
-				hideBaudRow();
-				ctlPending.forEach(function(r) { clearTimeout(r.timer); });
-				ctlPending = [];
-				if (wantDisconnect) {
-					setStatus('已斷線');
-					setButtons('idle');
-				} else {
-					setStatus('連線中斷', 'err');
-					setButtons('dropped');
-					say('連線中斷(裝置關機/超出距離/藍牙訊號中斷)。可按「重新連線」');
-				}
-			});
+			dev.removeEventListener('gattserverdisconnected', onGattDisconnected);
+			dev.addEventListener('gattserverdisconnected', onGattDisconnected);
 			return connectFlow(dev);
 		})
 		.catch(function(e) {
@@ -1620,8 +1872,47 @@ btnConnect.onclick = function() {
 };
 
 btnReconnect.onclick = function() {
+	autoRetried = false;
 	if (device) connectFlow(device);
 };
+
+/* ── 選埠下拉(v17)──
+ * 畫面上的下拉是唯一真相;偏好(LS_PORT)只在開頁時拿來設定下拉的初值。
+ * 反過來(連線時讀偏好)在無痕模式會出錯:記不住 ⇒ 讀回 port1,但畫面上明明選的是 port2。 */
+function readPortPref() {
+	var v = null;
+
+	try { v = localStorage.getItem(LS_PORT); } catch (e) { /* 無痕模式:用預設 port1 */ }
+	return v === '2' ? 2 : 1;
+}
+
+function selectedPort() {
+	return elPortSel && parseInt(elPortSel.value, 10) === 2 ? 2 : 1;
+}
+
+if (elPortSel) {
+	elPortSel.addEventListener('change', function() {
+		var n = selectedPort();
+
+		try { localStorage.setItem(LS_PORT, String(n)); }
+		catch (e) { /* 無痕模式會擋:本次照選的走,下次開頁回到 port1 */ }
+		if (!(rxChar && device && device.gatt && device.gatt.connected)) {
+			toast('下次連線會接到 ' + portName(n));
+			return;
+		}
+		if (n === portChosen) return;
+		/* 裝置端一條藍牙連線只接一個埠,換埠 = 重新連線(密碼、寫入權都是逐連線的) */
+		if (!window.confirm('切換到 ' + portName(n) + ' 要重新連線：目前的 console 會中斷，' +
+			'連上後要重新輸入連線密碼。\n\n確定要切換嗎？')) {
+			elPortSel.value = String(portChosen);
+			return;
+		}
+		autoRetried = false;
+		dropPlan = { status: '切換到 ' + portName(n) + '，重新連線中…', reconnect: true };
+		say('切換到 ' + portName(n) + '，重新連線中…');
+		disconnectNow();
+	});
+}
 
 btnDisconnect.onclick = function() {
 	wantDisconnect = true;
@@ -2464,6 +2755,8 @@ $('aiCopy').addEventListener('click', function() {
 
 	/* 勾選狀態一律由偏好推導(缺值 = 勾),不靠 HTML 的 checked 屬性當真相來源 */
 	if (lnBreakConfirm) lnBreakConfirm.checked = breakConfirmOn();
+	/* 選埠下拉的初值 = 上次選的(缺值 / 無痕 = port1,與舊版相同) */
+	if (elPortSel) elPortSel.value = String(readPortPref());
 
 	setKeysLive(false);
 	setCtrlArmed(false);
