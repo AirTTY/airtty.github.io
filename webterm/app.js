@@ -393,6 +393,20 @@ var lastPorts = [];     /* 這一次連線 LIST 回來的清單(換孔列用) */
  *    若等主鏈做完才扣,中間那段打的字會直送 NUS ⇒ 裝置在 LIST 之前就接了預設孔。 */
 var portHold = false;
 var heldBytes = [];
+/* 選孔還沒有結果時,**裝置輸出**也先暫存(2026-10-20)。
+ * [實測 2026-10-20,使用者 Chrome 對開發機 v1.8.11] 舊韌體連上藍牙就接它固定的埠、立刻送 `Password:`
+ * (bleak 量:NUS `Password:` +31 ms、LIST 回覆 01 89 01 +119 ms)—— 直接畫的話,它會跑到本頁
+ * 「韌體還不支援列出序列埠…」「輸入連線密碼…」那兩行的**上面**。
+ * 規則(outHeld):portHold 期間、而且選孔列沒開著 ⇒ 暫存;本頁的說明印完才依到達順序補印(outFlush)。
+ *   - 補印的時機只有兩個:portSettled(每一條結束扣住的路都經過它,含斷線)與出選孔列(showChooser)。
+ *     ⇒ 呼叫 portSettled 之前要先 say() 完本頁自己的說明,補印才會排在說明之後。
+ *   - 選孔列開著時不暫存:本頁的說明已經印了,之後裝置送的(30 秒守門那行)要即時看到,不可以壓到斷線才出現;
+ *     點了孔(SELECT 在路上)hideChooser 讓 choosing 變回 false ⇒ 自動又開始暫存,`Password:` 照樣排在「已接上…」之後。
+ * ⚠️ 鍵盤可以丟、**裝置輸出一個位元組都不丟**;rxBytes 照舊在收到時就算(「連上就被斷」的判斷靠它)。 */
+var outQ = [];          /* [{ u8, t }]:t = 收到的時間(側錄的時間戳照舊是「收到的時間」,不是補印的時間) */
+var outQBytes = 0;
+var OUT_HOLD_MAX = 65536;   /* 暫存上限:超過就立刻補印,這條連線之後不再暫存(順序顧不到了,也不可以為了順序丟資料) */
+var outLive = false;    /* 爆過上限 ⇒ 這條連線之後一律即時畫;connectFlow 歸零 */
 var choosing = false;   /* 選孔列開著、等人點(裝置端 30 秒選孔守門也在計時) */
 var choosePre = null;   /* 選孔列預設勾的孔(這台上次選的);Enter = 接它 */
 var chooseDeadline = 0; /* 裝置端選孔守門到期的時間(本頁倒數用) */
@@ -608,6 +622,8 @@ function portSettled(keep) {
 	portHold = false;
 	heldBytes = [];
 	updatePortBtn();
+	/* 暫存的裝置輸出**不論 keep 一律補印**(只有鍵盤可以丟,見 outQ)。呼叫端要先印完自己的說明再呼叫本函式 */
+	outFlush();
 	if (!keep) return;
 	for (i = 0; i < h.length; i++) sendBytes(h[i]);
 }
@@ -731,8 +747,8 @@ function onListResult(gen, c) {
 		 * 同 onSelectResult「選孔命令沒有結果」:扣住的字丟掉、主動斷開(2026-10-18 審查追加) */
 		dropPlan = { status: choiceGone !== null ? '沒有接到 ' + socketName(choiceGone) : '選孔沒有結果' };
 		choiceGone = null;
-		portSettled(false);
 		say('選孔命令沒有結果（可能是藍牙不穩）—— 為避免接到不是你選的孔，已中斷。可按「↻ 重新連線」再試');
+		portSettled(false);            /* 先說明、再補印暫存的裝置輸出(見 outQ);以下各處同理 */
 		disconnectNow();
 		return;
 	}
@@ -748,17 +764,17 @@ function onListResult(gen, c) {
 	if (c.kind === 'bad') {
 		/* 裝置收到 LIST 了(會等選孔),但清單讀不懂 —— 不能猜要接哪一孔 */
 		choiceGone = null;
-		portSettled(false);
 		dropPlan = { status: '序列埠清單讀不懂' };
 		say('裝置回的序列埠清單格式不對（本頁與韌體版本不合？）—— 為避免接錯孔，已中斷。可按「↻ 重新連線」再試');
+		portSettled(false);
 		disconnectNow();
 		return;
 	}
 	lastPorts = c.ports;
 	if (!lastPorts.length) {
-		portSettled(false);
 		dropPlan = { status: '沒有接序列線' };
 		say('這台 AirTTY 目前沒有接序列線 —— 請接上轉接線後按「↻ 重新連線」');
+		portSettled(false);
 		disconnectNow();               /* 不佔著藍牙席次等裝置的 30 秒守門 */
 		return;
 	}
@@ -837,6 +853,8 @@ function showChooser(pre, switchMode, gone) {
 		else say('這台 AirTTY 有 ' + lastPorts.length + ' 條序列線 —— 請在終端上方點選要接的孔' +
 			(pre !== null ? '（按 Enter 直接接上次的' + (/^[A-Za-z]/.test(socketName(pre)) ? ' ' : '') + socketName(pre) + '）' : ''));
 		setStatus('已連線:' + devLabel() + ' · 請選擇要接的孔', 'ok');
+		/* 說明印完了 ⇒ 補印暫存的裝置輸出;選孔列開著時 outHeld 為假,之後的輸出(30 秒守門那行)即時畫(見 outQ) */
+		outFlush();
 	}
 	elPortRow.classList.add('show');
 	updatePortBtn();
@@ -929,13 +947,12 @@ function onSelectResult(gen, c, chosen) {
 			listPorts(gen);
 			return;
 		}
-		portSettled(false);
 		dropPlan = { status: '沒有接到 ' + socketName(chosen) };
 		say(nameSp(socketName(chosen)) + '沒有線 —— 請確認轉接線後按「↻ 重新連線」');
+		portSettled(false);
 		disconnectNow();
 		return;
 	}
-	portSettled(false);
 	if (c.kind === 'other') {
 		/* 裝置已先接上別的孔(LIST 晚於裝置的 1.5 秒保底才到)。**不可以就這樣用** ——
 		 * 畫面會是別台設備的 console。重連一次讓 LIST 先到;還是一樣就停下來交給人。 */
@@ -951,13 +968,15 @@ function onSelectResult(gen, c, chosen) {
 			dropPlan = { status: '沒有接到 ' + socketName(chosen) };
 			say(msg + ' —— 為避免對錯的設備下指令，已中斷。請按「重新連線」再試一次');
 		}
+		portSettled(false);            /* 暫存的可能是別台設備的 `Password:`(裝置先接了別孔)—— 照樣補印、排在說明之後 */
 		disconnectNow();
 		return;
 	}
 	/* unsupported / writefail:LIST 都答了、選孔卻沒結果 —— 不能賭裝置接的是哪一孔,先斷開 */
-	if (!device || !device.gatt || !device.gatt.connected) return;
+	if (!device || !device.gatt || !device.gatt.connected) { portSettled(false); return; }
 	dropPlan = { status: '沒有接到 ' + socketName(chosen) };
 	say('選孔命令沒有結果（可能是藍牙不穩）—— 為避免接到不是你選的孔，已中斷。可按「↻ 重新連線」再試');
+	portSettled(false);
 	disconnectNow();
 }
 
@@ -966,9 +985,10 @@ function onBackendDown(d) {
 	if (!d || backendDown) return;
 	backendDown = d;
 	hideChooser();
-	portSettled(false);
 	setStatus(backendDownStatus(d), 'err');
 	say(backendDownText(d));
+	/* 本頁的說明先、裝置自己從 NUS 送的那行(`[AirTTY] hub 第 2 孔連不上…`,常比 0xA2 早到)補印在後 */
+	portSettled(false);
 }
 
 /* 找不到控制通道特徵值(舊韌體)→ 整組功能隱藏,不留半套死鈕 */
@@ -1276,8 +1296,9 @@ var logPushed = 0;
  *  在程式註解裡寫它會讓稽核表多出一筆假命中,反而害讀的人要多查一次。) */
 var senseDecoder = new TextDecoder();
 
-/* t 參數只給開發期注入測試資料用(見 README 維護者節):正式路徑一律不帶,
- * 由 logAppend 自己取現在時間。UI 上沒有任何地方能傳它。 */
+/* t 參數:開發期注入測試資料用(見 README 維護者節);正式路徑只有一處會帶 ——
+ * 選孔期間暫存的裝置輸出補印時(outFlush)帶「收到的時間」,其餘一律不帶、由 logAppend 自己取現在時間。
+ * UI 上沒有任何地方能傳它。 */
 function logAppend(u8, t) {
 	if (!u8 || !u8.length) return;
 	logChunks.push({ u8: u8, t: t || Date.now() });
@@ -2105,7 +2126,35 @@ function onNusValue(ev) {
 	/* 複製一份再交出去:xterm 的 write 是排隊非同步處理,
 	 * 而事件裡的 DataView 背後緩衝區由瀏覽器的 BLE 堆疊持有 */
 	var u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
-	rxBytes += u8.length;   /* 判「連上就被斷、什麼都沒收到」用(見斷線處理) */
+	rxBytes += u8.length;   /* 判「連上就被斷、什麼都沒收到」用(見斷線處理)—— 暫存的也算,收到就算 */
+	if (outHeld()) {        /* 選孔還沒有結果:先暫存,本頁說明印完再補印(見 outQ) */
+		outQ.push({ u8: u8, t: Date.now() });
+		outQBytes += u8.length;
+		if (outQBytes > OUT_HOLD_MAX) { outLive = true; outFlush(); }
+		return;
+	}
+	outFlush();             /* 保險:照理結束扣住時就補印完了;萬一有剩,先補舊的再畫新的,順序不亂 */
+	outEmit(u8);
+}
+
+/* 暫存期間 = 扣住鍵盤、而且選孔列沒開著(見 outQ) */
+function outHeld() {
+	return portHold && !choosing && !outLive;
+}
+
+/* 依到達順序補印暫存的裝置輸出 */
+function outFlush() {
+	var q = outQ, i;
+
+	if (!q.length) return;
+	outQ = [];
+	outQBytes = 0;
+	for (i = 0; i < q.length; i++) outEmit(q[i].u8, q[i].t);
+}
+
+/* 裝置輸出的**唯一出口**:畫面 + 側錄/偵測。即時與補印都走這裡 ⇒ 兩邊看到的位元組與順序一定相同。
+ * t = 收到的時間(補印時帶;即時的不帶,由 logAppend 取現在時間) */
+function outEmit(u8, t) {
 	/* ⚠️ 畫面優先,而且兩段各自 try —— 這是**唯一**把裝置輸出畫上去的地方,
 	 * 任何一行拋例外都會變成「連上了卻什麼都看不到」這種最難查的症狀
 	 * (2026-09-06 迴歸就長這樣)。側錄/偵測那一側再怎麼壞,
@@ -2119,7 +2168,7 @@ function onNusValue(ev) {
 		}
 	}
 	try {
-		logAppend(u8);
+		logAppend(u8, t);
 	} catch (e) {
 		if (!logAppendFailed) {
 			logAppendFailed = true;
@@ -2222,6 +2271,8 @@ function connectFlow(dev) {
 	choiceGone = null;
 	/* 一開始就扣住鍵盤(見 portHold):選孔有結果(portSettled)、或舊韌體 / 控制通道不可用(portUnsupported 等)才放開。
 	 * 連線失敗時維持扣住 —— 沒接好的連線不送任何字;下次 connectFlow 會清掉 heldBytes */
+	outFlush();             /* 照理是空的(斷線時就補印完了);萬一有剩也是補印,不丟 */
+	outLive = false;
 	portHold = true;
 	heldBytes = [];
 	hideChooser();
@@ -2263,14 +2314,12 @@ function onGattDisconnected() {
 	 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
 	 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
 	ctlRxChar = ctlTxChar = null;
-	senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
 	setCtlAvail(false);
 	hideBaudRow();
 	ctlPending.forEach(function(r) { clearTimeout(r.timer); });
 	ctlPending = [];
 	if (listPending) { clearTimeout(listPending.timer); listPending = null; }
 	hideChooser();
-	portSettled(false);
 	dropPlan = null;
 	if (wantDisconnect) {
 		setStatus('已斷線');
@@ -2304,6 +2353,10 @@ function onGattDisconnected() {
 		setButtons('dropped');
 		say('連線中斷(裝置關機/超出距離/藍牙訊號中斷)。可按「重新連線」');
 	}
+	/* 放開扣住的鍵(丟掉)並補印暫存的裝置輸出 —— 放在斷線說明**之後**(見 outQ)。
+	 * senseLine 一定要在補印之後才清:補印的殘行若留著,會接到下一條連線的第一行 */
+	portSettled(false);
+	senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
 }
 
 btnConnect.onclick = function() {
