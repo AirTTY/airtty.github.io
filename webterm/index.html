@@ -206,6 +206,28 @@ a { color: var(--accent); }
 #baudRow button:active { background: #5a4a28; transform: scale(.95); }
 #baudRow button.flash { background: #2a6cb8; border-color: var(--accent); }
 
+/* ── 選孔列（v18）──
+ * 連上後 AirTTY 回報「有好幾條序列線」才出現（只有一條會自動接，零佔位）；連線中按標題列「🔌 換孔」也會叫出來。
+ * 按鈕由 app.js 依裝置回報的清單產生（textContent，不碰 innerHTML —— 標籤是使用者自填的字串）。
+ * 與 #vendorRow 同策略：不折行、自己橫捲（四個孔＋標籤在 6 吋螢幕放不下一排）。 */
+#portRow {
+	display: none; align-items: center; gap: .35em;
+	padding: .45em .8em; background: #1d2a3a; color: var(--fg);
+	border-bottom: 1px solid var(--accent);
+	flex-wrap: nowrap; overflow-x: auto; scrollbar-width: thin; font-size: .92em;
+}
+#portRow.show { display: flex; }
+#portRow > * { flex: 0 0 auto; }
+#portRow .plabel { color: var(--dim); padding-right: .2em; }
+#portRow .pcount { color: var(--dim); font-size: .9em; padding-left: .2em; }
+#portRow button {
+	min-height: 40px; padding: .3em .8em;
+	-webkit-tap-highlight-color: transparent;
+	transition: background .08s, transform .08s;
+}
+#portRow button.active { background: #1c4e8a; border-color: #2a6cb8; }
+#portRow button:active { background: #4a4a58; transform: scale(.95); }
+
 /* ── 線路設定面板 ── */
 #sheetLine .lnrow { display: flex; gap: .5em; align-items: center; flex-wrap: wrap; margin-bottom: .7em; }
 #sheetLine label { font-size: .9em; color: var(--dim); }
@@ -311,6 +333,9 @@ a { color: var(--accent); }
 	<button id="btnConnect" class="primary">🔗 選擇裝置並連線</button>
 	<button id="btnReconnect" class="hidden">↻ 重新連線</button>
 	<button id="btnDisconnect" class="hidden">✕ 斷線</button>
+	<!-- 換孔（v18）：連線中、這台有兩條以上的序列線才出現；按了叫出選孔列，選另一孔會先問再重新連線 -->
+	<button id="btnPort" class="hidden" aria-controls="portRow"
+		title="換接 AirTTY 的另一個孔（會重新連線，要重新輸入連線密碼）">🔌 換孔</button>
 	<span id="status">未連線</span>
 	<span class="sep"></span>
 	<button id="btnKeys" aria-expanded="false" aria-controls="toolbar"
@@ -324,6 +349,13 @@ a { color: var(--accent); }
 	多台並存時靠近一點依訊號強度判斷，連上後名稱才會出現。
 	連上後輸入裝置的<strong>連線密碼</strong>即進 console
 	—— 出廠預設密碼為 <code>AirTTY</code>（可於管理介面更改；若已更改請用新密碼）。
+	<br>🔌 <strong>要接哪一個序列埠</strong>：連上後本頁會問 AirTTY「現在哪幾個孔有接線」——
+	<strong>只有一條就自動接上</strong>；有好幾條會在終端上方列出來讓你點
+	（<strong>hub 第 N 孔</strong>／<strong>機身 USB</strong>，後面是你在管理介面設的標籤），
+	並記住這台上次選的孔（按 Enter 直接接它）。連線中要換孔按標題列的 <strong>🔌 換孔</strong>。
+	韌體 <strong>v1.9.0</strong> 起支援；較舊韌體連預設的孔，連上後畫面會說明。
+	選的孔不通時畫面會直接告訴你是哪一孔 —— <strong>不會自動改接另一孔</strong>，
+	免得你對著另一台設備下指令。
 	<br>🔵 <strong>韌體 v1.7 起，藍牙最多兩人同時連線</strong>，兩人看到的是同一個畫面；
 	但<strong>同時只有一人能打字</strong> —— 先連上的人持有輸入權，他離線後另一人自動接手。
 	滿兩人時裝置<strong>會停止廣播</strong>，第三台就掃不到了（這是刻意設計，不是故障）。
@@ -434,6 +466,10 @@ a { color: var(--accent); }
      ⚠️ 刻意不自動換：亂碼只證明現在這個是錯的，不證明對的是哪一個，
      而換鮑率會打斷連線中設備的輸出——那一下必須是人按的。 -->
 <div id="baudRow" role="group" aria-label="一鍵試鮑率"></div>
+
+<!-- 選孔列（v18）：AirTTY 回報有好幾條序列線時，列出「hub 第 N 孔 — 標籤」讓人點；
+     內容由 app.js 依裝置回報的清單產生，平常零佔位。 -->
+<div id="portRow" role="group" aria-label="選擇要接的序列埠"></div>
 
 <div id="term"></div>
 

@@ -10,9 +10,9 @@
  *   ① 零使用者資料持久化：終端輸出、側錄、你打的指令、AI 問答內容，一律只存在
  *      「本次分頁的記憶體」，關頁即消。全檔沒有任何一行把使用者內容寫進
  *      localStorage / sessionStorage / IndexedDB / cookie。
- *      只有三筆瀏覽器儲存，是「字級」「快捷鍵列展開狀態」「送 Break 前先確認」
- *      三個 UI 偏好（見 LS_FONT / LS_KEYS / LS_BREAK_CONFIRM），值只有數字與
- *      0/1，不含任何使用者內容。
+ *      只有四類瀏覽器儲存，是「字級」「快捷鍵列展開狀態」「送 Break 前先確認」
+ *      「每台 AirTTY 上次選的孔」四個 UI 偏好（見 LS_FONT / LS_KEYS / LS_BREAK_CONFIRM /
+ *      LS_PORT_PREFIX；最後一類每台一筆，鍵是裝置名稱尾碼），值只有數字與 0/1，不含任何使用者內容。
  *   ② 零對外傳輸：本檔沒有任何對外的網路呼叫。AI 功能走「複製到剪貼簿 +
  *      開新分頁到官方聊天頁」，內容由你自己貼上、自己按送出，本頁不代送、不存 key。
  *      （唯一的例外在 sw.js，而它只對「本站自己的檔案」作用 —— README 有完整說明。）
@@ -59,6 +59,15 @@
  *   not-ready；不是寫入權持有者 → 送出去但沒生效（回 timeout）。
  *   ⚠️「沒生效」**不可以**顯示成成功 —— 使用者會以為換好了，然後對著還是亂碼的
  *   畫面查半天。
+ * - **列出序列埠 → 選孔：依裝置端韌體版本而異**（與名稱那條同理）。
+ *   **韌體 v1.9.0 起**序列埠以「插孔」命名（機身 USB、hub 第 1～4 孔），裝置端等「列出／選孔」
+ *   命令（或 1.5 秒保底）才接序列埠：本頁連上後先問「現在哪些孔有線」，0 條講原因並斷線、
+ *   1 條自動接、多條列出來讓人點（預設勾這台上次選的）。選的孔不通時裝置會先送 0xA2 事件與
+ *   一行說明再斷線。**v1.8.11 以前**連上就固定接第一個埠位，不認得這兩個命令
+ *   （實測回 not-ready 或 bad-frame）→ 本頁照常連、多講一行「先連預設的孔」。
+ *   ⚠️ **絕不自動改接另一個孔**：選的孔不通就說不通，讓人自己選 ——
+ *   悄悄落到別台設備，正是 AI 設錯交換器那種事故（OpenWRT repo checklist #233）。
+ *   （v17 用固定的兩項下拉選埠，從未發布；v18 起改成連上後動態列出。）
  *
  * 相依：xterm.js v5.x（本目錄自帶）。用到的公開 API 僅 Terminal / write /
  * onData / focus / resize / options / element —— 已對照本目錄這份 bundle 確認。
@@ -100,6 +109,170 @@ var C_BAUD = 0x01, C_DATA = 0x02, C_PARITY = 0x03, C_STOP = 0x04,
 	C_BREAK = 0x05, C_DTR = 0x06, C_RTS = 0x07, C_STATE = 0x10;
 var EV_MODEM = 0xa0, EV_READY = 0xa1;
 
+/* ── 選孔判定 begin(純函式;OpenWRT repo scripts/test/webterm-port-select.test.js 抽出來在 vm 裡跑)── */
+/* 控制通道的「列出序列埠」「選孔」命令與裝置端事件(韌體 v1.9.0 起;
+ * OpenWRT repo docs/plans/port-identity-redesign.md §8.1、附錄 B.3,裝置端編碼器 src/airtty-blebridge/ble_ports.h):
+ *   送   [1][0x09][0]                          列出「此刻有線」的孔
+ *   回   [1][0x89][0][idx][flags][n][標籤片段]  每孔一則或多則(每則 ≤ 20 bytes;flags bit0 = 這孔的標籤還有下一段,
+ *                                             把同一孔的片段**位元組**接起來再以 UTF-8 解碼);最後 [1][0x89][0][0xFF] 結尾
+ *   送   [1][0x08][1][idx]                     選孔
+ *   回   [1][0x88][status][idx]                0 = 好,正在接;4 = 沒有這個孔、或這孔此刻沒線;5 = 這條連線已接上別的孔(payload = 目前的孔)
+ *   事件 [1][0xA2][0][idx][reason]             選的孔不通,裝置隨後斷線。reason 1 = 沒有人在聽、2 = 一連上就關;
+ *                                             idx 0xFF = 本頁沒選孔(例:列出命令沒送到)、裝置保底時發現沒有任何孔有線
+ *   idx   = Telnet 埠 − 4000:0 = 機身 USB、1～9 = hub 第 N 孔、11～18 = 它牌 hub 埠 N;0xFF = 沒有
+ *   flags = bit1 有人持寫入鎖(韌體 v1.9.0 尚未提供,恆 0)、bit2 要連線密碼、bit3 維護中、bit4 它牌 hub(埠號未校正)
+ * ⚠️ 舊韌體(v1.8.11 以前)不認得 0x09 / 0x08:認證前回 status 1(not-ready)、認證後回 3(bad-frame)
+ *    [實測 2026-10-15,0x08;0x09 走同一條路]。新韌體對這兩個命令**絕不回 1 或 3** ⇒「1 或 3 = 舊韌體」可以當判準;
+ *    沒回應同樣當舊韌體。 */
+var C_SELECT = 0x08, C_LIST = 0x09, EV_BACKEND_DOWN = 0xa2;
+var ST_SEL_BADARG = 4, ST_SEL_ALREADY = 5;
+var IDX_NONE = 0xff;
+var PF_MORE = 0x01, PF_LOCK = 0x02, PF_MAINT = 0x08, PF_OTHER = 0x10;
+
+/* 孔名(畫面由本頁自己畫,不走空中 —— §8.1)。0 是機身 USB,不是「沒有」 */
+function socketName(idx) {
+	if (idx === 0) return '機身 USB';
+	if (idx >= 1 && idx <= 9) return 'hub 第 ' + idx + ' 孔';
+	if (idx >= 11 && idx <= 18) return '它牌 hub 埠 ' + (idx - 10);
+	if (idx === IDX_NONE) return '（沒有序列線）';
+	return '孔 ' + idx;
+}
+
+/* 中文接在孔名後面時,孔名以英數結尾(「機身 USB」)要空一格:「機身 USB 連不上」「hub 第 2 孔連不上」 */
+function nameSp(name) {
+	return /[A-Za-z0-9]$/.test(name) ? name + ' ' : name;
+}
+
+/* 清單上一個孔的顯示文字:「hub 第 2 孔 — 核心SW」(標籤空就只有孔名)+ 狀態記號。晶片名裝置不送(§8.1) */
+function socketText(p) {
+	var t = socketName(p.idx) + (p.label ? ' — ' + p.label : '');
+
+	if (p.flags & PF_LOCK) t += ' 🔒';
+	if (p.flags & PF_MAINT) t += ' 🔧 維護中';
+	if (p.flags & PF_OTHER) t += ' ⚠️ 埠號未校正';
+	return t;
+}
+
+/* LIST 回覆的累加器。listAccPush 回 'more'(還沒完)| 'done'(收到結尾)| 'old'(status 非 0:舊韌體)| 'bad'(格式錯) */
+function listAccNew() {
+	return { order: [], parts: {}, flags: {}, open: -1 };
+}
+
+function listAccPush(acc, u8) {
+	var idx, fl, n, i, a;
+
+	if (!u8 || u8.length < 3 || u8[0] !== CTL_VER || u8[1] !== (C_LIST | 0x80)) return 'bad';
+	if (u8[2] !== 0) return 'old';
+	if (u8.length < 4) return 'bad';
+	idx = u8[3];
+	if (idx === IDX_NONE) return acc.open < 0 ? 'done' : 'bad';   /* 標籤還沒完就結尾 = 格式錯 */
+	if (u8.length < 6) return 'bad';
+	fl = u8[4];
+	n = u8[5];
+	if (u8.length !== 6 + n) return 'bad';
+	if (acc.open !== idx) {
+		/* 新的一孔:上一孔必須已經收完、這孔不可以出現過 */
+		if (acc.open >= 0 || acc.parts[idx]) return 'bad';
+		acc.order.push(idx);
+		acc.parts[idx] = [];
+	}
+	a = acc.parts[idx];
+	for (i = 0; i < n; i++) a.push(u8[6 + i]);
+	acc.flags[idx] = fl & ~PF_MORE;
+	acc.open = (fl & PF_MORE) ? idx : -1;
+	return 'more';
+}
+
+function listAccResult(acc) {
+	return acc.order.map(function(idx) {
+		var label = '';
+
+		try { label = new TextDecoder('utf-8').decode(Uint8Array.from(acc.parts[idx])); }
+		catch (e) { label = ''; }
+		return { idx: idx, flags: acc.flags[idx], label: label };
+	});
+}
+
+/* LIST 結果分類。r = ctlList resolve 的 {status, ports, bad};e = reject 的 Error(兩者擇一)。
+ *   ok        清單在 ports(可能是空的)
+ *   old       舊韌體(status 1 / 3 或其他非 0)—— 照常連,講一行「先連預設的孔」
+ *   timeout   沒回應 —— 同舊韌體處理(韌體 v1.8.0 起的控制通道對不認得的命令都會回 1 / 3,沒回應多半是更舊或通訊異常)
+ *   writefail 命令沒寫進去(GATT 錯誤)—— 裝置沒收到 ⇒ 新韌體會自己在 1.5 秒保底接預設孔
+ *   bad       清單格式不對 */
+function classifyList(r, e) {
+	if (e) return { kind: e.message === 'local-timeout' ? 'timeout' : 'writefail', ports: [] };
+	if (!r) return { kind: 'timeout', ports: [] };
+	if (r.status !== 0) return { kind: 'old', ports: [] };
+	if (r.bad) return { kind: 'bad', ports: [] };
+	return { kind: 'ok', ports: r.ports || [] };
+}
+
+/* 選孔結果分類。r = ctlRequest resolve 的 {status, actual};e = reject 的 Error(兩者擇一)。
+ * 回 { kind, slot }:ok / badslot(4:沒這孔或沒線)/ other(5:已先接上別的孔,slot = 那一孔)/
+ * unsupported(1、3、沒回應)/ writefail(GATT 錯誤) */
+function classifySelect(r, e, chosen) {
+	if (e) return { kind: e.message === 'local-timeout' ? 'unsupported' : 'writefail', slot: chosen };
+	if (!r) return { kind: 'unsupported', slot: chosen };
+	if (r.status === 0) return { kind: 'ok', slot: chosen };
+	if (r.status === ST_SEL_BADARG) return { kind: 'badslot', slot: chosen };
+	if (r.status === ST_SEL_ALREADY) {
+		if (r.actual === chosen) return { kind: 'ok', slot: chosen };
+		return { kind: 'other', slot: typeof r.actual === 'number' ? r.actual : IDX_NONE };
+	}
+	return { kind: 'unsupported', slot: chosen };   /* 1、3 與任何不認得的狀態 */
+}
+
+/* 拍板題 8:只有一條線 ⇒ 自動接它;多條 ⇒ 不自動,預設勾「這台上次選的」(還在清單裡才勾)。
+ * 回 { auto: idx | null, pre: idx | null } */
+function pickSocket(ports, remembered) {
+	var i;
+
+	if (!ports || !ports.length) return { auto: null, pre: null };
+	if (ports.length === 1) return { auto: ports[0].idx, pre: ports[0].idx };
+	for (i = 0; i < ports.length; i++)
+		if (ports[i].idx === remembered) return { auto: null, pre: remembered };
+	return { auto: null, pre: null };
+}
+
+/* 「這台」的鍵:裝置名稱的尾碼(AirTTY-A1-52C8 → 52C8,與廣播裡的識別碼同一個);
+ * 沒有名稱(很舊的韌體)退回瀏覽器給的 device.id(每個網站各一個,不跨站)。都沒有 ⇒ null = 不記 */
+function deviceKey(dev) {
+	var m;
+
+	if (dev && typeof dev.name === 'string') {
+		m = /-([0-9A-Fa-f]{4,6})$/.exec(dev.name);
+		if (m) return m[1].toUpperCase();
+	}
+	if (dev && typeof dev.id === 'string' && dev.id)
+		return 'id:' + dev.id.replace(/[^A-Za-z0-9+\/=_-]/g, '').slice(0, 64);
+	return null;
+}
+
+/* 0xA2 的 payload → { slot, reason };格式不對回 null(控制通道出事不得波及終端) */
+function parseBackendDown(payload) {
+	if (!payload || payload.length < 2) return null;
+	return { slot: payload[0], reason: payload[1] };
+}
+
+/* 0xA2 的說明。只講裝置**確定知道**的事:哪一孔、沒人在聽 / 一連上就關 */
+function backendDownText(d) {
+	var p;
+
+	if (d.slot === IDX_NONE)
+		return '這台 AirTTY 目前沒有接任何序列線 —— 請接上轉接線後按「↻ 重新連線」';
+	p = 'AirTTY 的 ' + nameSp(socketName(d.slot));
+	if (d.reason === 2)
+		return p + '一連上就被關閉（沒有收到任何資料）—— 請確認轉接線，或改選其他孔再連線';
+	return p + '連不上（線可能剛被拔掉，或這孔已停用）—— 請確認轉接線，或改選其他孔再連線';
+}
+
+/* 0xA2 之後的狀態列短句 */
+function backendDownStatus(d) {
+	if (d.slot === IDX_NONE) return '沒有接序列線';
+	return socketName(d.slot) + (d.reason === 2 ? ' 一連上就被關閉' : ' 連不上');
+}
+/* ── 選孔判定 end ── */
+
 /* 本頁的等待上限刻意比裝置端的 1 秒**長**:這樣「沒生效」一律由裝置端回
  * status 2 來判定,提示訊息只有一個來源;本地逾時只是連線真斷掉時的保險。 */
 var CTL_WAIT_MS = 2500;
@@ -119,6 +292,14 @@ var LS_KEYS = 'airtty.webterm.keysOpen';
  * 它不是線路參數(不會送到裝置、不影響任何設備),而是這個瀏覽器的操作習慣,
  * 所以不受「線路參數不記憶」那條鐵律管。缺值 = 開(安全側預設)。 */
 var LS_BREAK_CONFIRM = 'airtty.webterm.breakConfirm';
+/* 「這台 AirTTY 上次選的孔」(v18;docs/plans/port-identity-redesign.md §8.2-6):每台一筆,
+ * 鍵 = 前綴 + 裝置名稱尾碼(見 deviceKey,例 airtty.webterm.port.52C8),值 = 孔的 idx(0～18 的數字)。
+ * ⚠️ 為什麼它可以記、線路參數卻不行:線路參數(鮑率等)會**送到裝置、改動正在連的那台設備**;
+ * 這裡只是「這台我上次接哪一孔」—— 和 LS_BREAK_CONFIRM 同類的操作偏好,不帶任何 console 內容,
+ * 只在「多條線、要人選」時拿來預設勾(不會自己接)。尾碼本來就印在藍牙清單的裝置名稱上。
+ * **只記人選的**(點的 / 換孔):「只有一條線而自動接上」的不記 —— 記了會蓋掉這台多條線時人點的那一孔。
+ * 讀不到(無痕模式)= 沒有記憶,照樣能用。v17(未發布)的單一鍵 airtty.webterm.port 不再使用。 */
+var LS_PORT_PREFIX = 'airtty.webterm.port.';
 var FONT_MIN = 8, FONT_MAX = 24, FONT_DEFAULT = 14;
 
 /* 側錄緩衝上限(**位元組**;v1.7 前這裡是「解碼後字元數」,改存 raw u8 後語意跟著改)。
@@ -199,6 +380,54 @@ var wantDisconnect = false;   /* 區分「使用者按斷線」與「意外斷�
 var writeQueue = Promise.resolve();  /* GATT 同時只能一個操作 → 寫入串行化 */
 var ctrlArmed = false;  /* Ctrl 修飾鍵:等待下一個鍵 */
 
+/* ── 選孔(v18)的逐連線狀態 —— connectFlow 一開始歸零(pendingPick / autoRetried 例外,見各自註解)── */
+var elPortRow = document.getElementById('portRow');   /* 選孔列(多條線時才出現) */
+var btnPort = document.getElementById('btnPort');     /* 標題列「🔌 換孔」(連線中、這台有兩條以上的線才出現) */
+var portChosen = -1;    /* 這一次連線接的孔 idx;-1 = 還沒選 / 舊韌體 */
+var portHow = '';       /* 怎麼選到的:auto(只有一條)| pick(人點的)| pending(換孔 / 重連後直接接) */
+var lastPorts = [];     /* 這一次連線 LIST 回來的清單(換孔列用) */
+/* 選孔還沒有結果時先扣住鍵盤 —— 韌體 v1.9.0 起,client 的第一筆資料會讓裝置**直接接預設孔**
+ * (拍板題 9 (a):只有一條就接它、多條接孔號最小的);人還沒選孔就打的字,可能打進不是他要的那台。
+ * 選孔列開著時打的字**直接丟掉**(不知道要給哪一台,Enter 例外 = 接預設勾的孔),其餘時候扣住、有結果才送。
+ * ⚠️ 從 connectFlow 一開始就扣(2026-10-18 審查):wireUp 在 NUS 訂閱完成**之前**就設了 rxChar,
+ *    若等主鏈做完才扣,中間那段打的字會直送 NUS ⇒ 裝置在 LIST 之前就接了預設孔。 */
+var portHold = false;
+var heldBytes = [];
+/* 選孔還沒有結果時,**裝置輸出**也先暫存(2026-10-20)。
+ * [實測 2026-10-20,使用者 Chrome 對開發機 v1.8.11] 舊韌體連上藍牙就接它固定的埠、立刻送 `Password:`
+ * (bleak 量:NUS `Password:` +31 ms、LIST 回覆 01 89 01 +119 ms)—— 直接畫的話,它會跑到本頁
+ * 「韌體還不支援列出序列埠…」「輸入連線密碼…」那兩行的**上面**。
+ * 規則(outHeld):portHold 期間、而且選孔列沒開著 ⇒ 暫存;本頁的說明印完才依到達順序補印(outFlush)。
+ *   - 補印的時機只有兩個:portSettled(每一條結束扣住的路都經過它,含斷線)與出選孔列(showChooser)。
+ *     ⇒ 呼叫 portSettled 之前要先 say() 完本頁自己的說明,補印才會排在說明之後。
+ *   - 選孔列開著時不暫存:本頁的說明已經印了,之後裝置送的(30 秒守門那行)要即時看到,不可以壓到斷線才出現;
+ *     點了孔(SELECT 在路上)hideChooser 讓 choosing 變回 false ⇒ 自動又開始暫存,`Password:` 照樣排在「已接上…」之後。
+ * ⚠️ 鍵盤可以丟、**裝置輸出一個位元組都不丟**;rxBytes 照舊在收到時就算(「連上就被斷」的判斷靠它)。 */
+var outQ = [];          /* [{ u8, t }]:t = 收到的時間(側錄的時間戳照舊是「收到的時間」,不是補印的時間) */
+var outQBytes = 0;
+var OUT_HOLD_MAX = 65536;   /* 暫存上限:超過就立刻補印,這條連線之後不再暫存(順序顧不到了,也不可以為了順序丟資料) */
+var outLive = false;    /* 爆過上限 ⇒ 這條連線之後一律即時畫;connectFlow 歸零 */
+var choosing = false;   /* 選孔列開著、等人點(裝置端 30 秒選孔守門也在計時) */
+var choosePre = null;   /* 選孔列預設勾的孔(這台上次選的);Enter = 接它 */
+var chooseDeadline = 0; /* 裝置端選孔守門到期的時間(本頁倒數用) */
+var chooseTimer = 0;
+var switching = false;  /* 選孔列是「連線中換孔」開的(不倒數、可關) */
+var listRetries = 0;    /* 「選的孔剛被拔線(4)⇒ 重新列出」的次數上限,不打成迴圈 */
+/* LIST 沒回應(逾時)/ 沒寫進去(GATT 錯誤)⇒ 再送一次,每條連線一次(與 listRetries 分開算,不吃掉「拔線重列」的額度)。
+ * 為什麼要重送:v1.9.0 若其實收到了 LIST(回覆掉了 / 晚到),它已經在等 SELECT、**不會**自己接預設孔 ——
+ * 直接當舊韌體放行,30 秒後只會被裝置斷線,原因還講錯。 */
+var listResent = false;
+/* 人選的孔(點的 / 換孔 / 重連後直接接)回 4、或不在新清單裡 ⇒ 下一份清單**不自動接**(就算只剩一條),
+ * 出選孔列並講明「你選的孔現在沒有線」。值 = 那一孔的 idx;null = 沒有。逐連線,用完即清 */
+var choiceGone = null;
+var listPending = null; /* 等 LIST 回覆中:{ acc, resolve, reject, timer } */
+var pendingPick = null; /* 換孔 / 「裝置先接上別的孔」重連後直接接的孔 —— 跨一次重連,用完即清 */
+var backendDown = null; /* 本次連線收到的 0xA2({slot, reason}):斷線訊息據此講原因,不再猜 */
+var dropPlan = null;    /* 我方主動斷線時,斷線事件要怎麼收尾:{ status, reconnect } */
+var autoRetried = false;/* 「裝置先接上別的孔」只自動重連一次,不打成迴圈(按鈕觸發的連線才歸零) */
+var rxBytes = 0;        /* 本次連線收到的序列輸出位元組數 */
+var connectedAt = 0;    /* 本次連線主鏈完成的時間(判「連上就被斷」用) */
+
 function setStatus(text, cls) {
 	elStatus.textContent = text;
 	elStatus.className = cls || '';
@@ -260,6 +489,15 @@ function sendBytes(bytes) {
 	var i;
 
 	if (!rxChar || !bytes || !bytes.length) return;
+	if (portHold) {                                    /* 選孔還沒結果:見 portHold */
+		if (choosing) {
+			if (choosePre !== null && bytes.length === 1 && bytes[0] === 0x0d) { pickSocketNow(choosePre); return; }
+			toast('請先在終端上方選要接的孔', 'warn');
+			return;                                    /* 不知道要給哪一台 ⇒ 丟掉 */
+		}
+		heldBytes.push(bytes);
+		return;
+	}
 	for (i = 0; i < bytes.length; i += WRITE_CHUNK) {
 		(function(chunk) {
 			writeQueue = writeQueue.then(function() {
@@ -347,6 +585,8 @@ function onCtlFrame(u8) {
 
 	if (cmd === EV_READY) { setCtlReady(true); return; }
 	if (cmd === EV_MODEM) { showModem(payload.length ? payload[0] : 0); return; }
+	if (cmd === EV_BACKEND_DOWN) { onBackendDown(parseBackendDown(payload)); return; }
+	if (cmd === (C_LIST | 0x80)) { onListFrame(u8); return; }   /* 多則訊框,不走 ctlPending 的一問一答 */
 
 	actual = null;
 	if (payload.length === 4) {
@@ -364,6 +604,391 @@ function onCtlFrame(u8) {
 		rec.resolve({ status: st, actual: actual });
 		return;
 	}
+}
+
+/* ══ 選孔(v18)══════════════════════════════════════════════════════════
+ * 流程:NUS 訂閱完(主鏈結束)→ 立刻在背景找控制通道 → 送 LIST → 依清單:0 條講原因並斷線、
+ * 1 條自動 SELECT、多條出選孔列讓人點(預設勾這台上次選的,Enter = 接它)→ 依 SELECT 回覆講清楚。
+ * 判定規則在上面「選孔判定」那段純函式;這裡只負責把結果變成畫面與動作。 */
+
+function devLabel() {
+	return device && device.name ? device.name : '(無名裝置,連線後名稱可能稍後出現)';
+}
+
+/* 選孔有結果了:放開(或丟掉)扣住的鍵。keep=false 用在「那些字不知道要給哪一台」 */
+function portSettled(keep) {
+	var h = heldBytes, i;
+
+	portHold = false;
+	heldBytes = [];
+	updatePortBtn();
+	/* 暫存的裝置輸出**不論 keep 一律補印**(只有鍵盤可以丟,見 outQ)。呼叫端要先印完自己的說明再呼叫本函式 */
+	outFlush();
+	if (!keep) return;
+	for (i = 0; i < h.length; i++) sendBytes(h[i]);
+}
+
+/* 我方主動斷線(選孔失敗),斷線事件依 dropPlan 收尾 */
+function disconnectNow() {
+	if (device && device.gatt && device.gatt.connected) device.gatt.disconnect();
+}
+
+/* 每台記憶(LS_PORT_PREFIX)。讀不到 / 寫不進(無痕模式)= 沒有記憶,照樣能用 */
+function rememberSocket(idx) {
+	var k = deviceKey(device);
+
+	if (!k) return;
+	try { localStorage.setItem(LS_PORT_PREFIX + k, String(idx)); } catch (e) { /* 無痕模式會擋,忽略 */ }
+}
+
+function recallSocket() {
+	var k = deviceKey(device), v = null;
+
+	if (!k) return null;
+	try { v = localStorage.getItem(LS_PORT_PREFIX + k); } catch (e) { return null; }
+	return v !== null && /^\d{1,3}$/.test(v) ? parseInt(v, 10) : null;
+}
+
+/* 清單裡這一孔的資料(顯示用);不在清單就只有孔名 */
+function portInfo(idx) {
+	var i;
+
+	for (i = 0; i < lastPorts.length; i++)
+		if (lastPorts[i].idx === idx) return lastPorts[i];
+	return { idx: idx, flags: 0, label: '' };
+}
+
+/* 「🔌 換孔」:連線中、選孔已有結果、這台有兩條以上的線才出現 */
+function updatePortBtn() {
+	if (!btnPort) return;
+	btnPort.classList.toggle('hidden', !(rxChar && portChosen >= 0 && !portHold &&
+		lastPorts.length >= 2 && !choosing));
+}
+
+/* 這台不支援列出序列埠(韌體沒有控制通道 / 不認得 LIST / 沒回應)⇒ 照常連,講一行。
+ * 舊韌體連上就已經接著它固定的那一個,扣住的字照送。 */
+function portUnsupported() {
+	say('這台 AirTTY 的韌體還不支援列出序列埠（v1.9.0 起），先連預設的孔');
+	say('輸入連線密碼後即進 console（輸入時不會回顯是正常的）');
+	setStatus('已連線:' + devLabel(), 'ok');
+	portSettled(true);
+}
+
+/* LIST:送 [1][9][0],收多則 0x89 直到結尾。不走 ctlRequest(那是一問一答,第二則起會被丟掉)。
+ * 走同一條 writeQueue(GATT 同時只能一個操作)。 */
+function ctlList() {
+	if (!ctlRxChar) return Promise.reject(new Error('no-ctl'));
+	if (listPending) {               /* 上一輪還在等:作廢它(不會發生在正常流程,保險) */
+		clearTimeout(listPending.timer);
+		listPending.reject(new Error('superseded'));
+		listPending = null;
+	}
+	return new Promise(function(resolve, reject) {
+		var rec = { acc: listAccNew(), resolve: resolve, reject: reject, timer: 0 };
+		var frame = new Uint8Array([CTL_VER, C_LIST, 0]);
+
+		rec.timer = setTimeout(function() {
+			if (listPending === rec) listPending = null;
+			reject(new Error('local-timeout'));
+		}, CTL_WAIT_MS);
+		listPending = rec;
+		writeQueue = writeQueue.then(function() {
+			if (!ctlRxChar) throw new Error('no-ctl');
+			return ctlRxChar.writeValueWithResponse
+				? ctlRxChar.writeValueWithResponse(frame)
+				: ctlRxChar.writeValue(frame);
+		}).catch(function(e) {
+			if (listPending !== rec) return;
+			listPending = null;
+			clearTimeout(rec.timer);
+			reject(e);
+		});
+	});
+}
+
+/* 裝置送來的 0x89(LIST 回覆的一則)。沒在等就丟掉(晚到 / 重複) */
+function onListFrame(u8) {
+	var rec = listPending, r;
+
+	if (!rec) return;
+	r = listAccPush(rec.acc, u8);
+	if (r === 'more') return;
+	listPending = null;
+	clearTimeout(rec.timer);
+	if (r === 'done') rec.resolve({ status: 0, ports: listAccResult(rec.acc) });
+	else if (r === 'old') rec.resolve({ status: u8[2], ports: [] });
+	else rec.resolve({ status: 0, bad: true, ports: [] });
+}
+
+function listPorts(gen) {
+	ctlList().then(function(r) {
+		onListResult(gen, classifyList(r, null));
+	}, function(e) {
+		onListResult(gen, classifyList(null, e));
+	});
+}
+
+function onListResult(gen, c) {
+	var pick, gone;
+
+	if (gen !== connGen || !rxChar) return;    /* 已斷線或重連過:這輪作廢 */
+	if (backendDown) { portSettled(false); return; }   /* 0xA2 已經講過原因,不再疊一層訊息 */
+	/* 沒回應 / 沒寫進去 ⇒ 先再送一次(見 listResent)。控制通道已經沒了(探索失敗)就不必送 */
+	if ((c.kind === 'timeout' || c.kind === 'writefail') && !listResent && ctlRxChar) {
+		listResent = true;
+		say(c.kind === 'timeout' ? '（沒有收到序列埠清單，再問一次…）'
+			: '（「列出序列埠」的命令沒有送到裝置，再送一次…）');
+		listPorts(gen);
+		return;
+	}
+	if (lastPorts.length && (c.kind === 'old' || c.kind === 'timeout' || c.kind === 'writefail')) {
+		/* 這條連線已經拿過 v1.9.0 的清單(只有「選的孔回 4 ⇒ 重新列出」會走到這裡):裝置已在等 SELECT、
+		 * **不會**自己接預設孔 ⇒ 不可以當舊韌體 / 保底放行(portUnsupported 會把扣住的字送出去、原因也講錯)。
+		 * 同 onSelectResult「選孔命令沒有結果」:扣住的字丟掉、主動斷開(2026-10-18 審查追加) */
+		dropPlan = { status: choiceGone !== null ? '沒有接到 ' + socketName(choiceGone) : '選孔沒有結果' };
+		choiceGone = null;
+		say('選孔命令沒有結果（可能是藍牙不穩）—— 為避免接到不是你選的孔，已中斷。可按「↻ 重新連線」再試');
+		portSettled(false);            /* 先說明、再補印暫存的裝置輸出(見 outQ);以下各處同理 */
+		disconnectNow();
+		return;
+	}
+	if (c.kind === 'old' || c.kind === 'timeout') { portUnsupported(); return; }
+	if (c.kind === 'writefail') {
+		/* 命令沒送到 ⇒ 新韌體會在 1.5 秒保底自己接預設孔(多條線時會在終端講接了哪一孔);
+		 * 舊韌體這時多半是 session 已收掉、隨後會斷線(斷線處理會講) */
+		say('（「列出序列埠」的命令沒有送到裝置，由 AirTTY 自動接預設的孔）');
+		setStatus('已連線:' + devLabel(), 'ok');
+		portSettled(true);
+		return;
+	}
+	if (c.kind === 'bad') {
+		/* 裝置收到 LIST 了(會等選孔),但清單讀不懂 —— 不能猜要接哪一孔 */
+		choiceGone = null;
+		dropPlan = { status: '序列埠清單讀不懂' };
+		say('裝置回的序列埠清單格式不對（本頁與韌體版本不合？）—— 為避免接錯孔，已中斷。可按「↻ 重新連線」再試');
+		portSettled(false);
+		disconnectNow();
+		return;
+	}
+	lastPorts = c.ports;
+	if (!lastPorts.length) {
+		dropPlan = { status: '沒有接序列線' };
+		say('這台 AirTTY 目前沒有接序列線 —— 請接上轉接線後按「↻ 重新連線」');
+		portSettled(false);
+		disconnectNow();               /* 不佔著藍牙席次等裝置的 30 秒守門 */
+		return;
+	}
+	if (pendingPick !== null) {
+		if (lastPorts.some(function(p) { return p.idx === pendingPick; })) {
+			pick = pendingPick;
+			pendingPick = null;
+			selectSocket(gen, pick, 'pending');
+			return;
+		}
+		choiceGone = pendingPick;      /* 換孔 / 重連要接的那一孔現在沒線 ⇒ 不可以落到「只有一條就自動接」 */
+		pendingPick = null;
+	}
+	if (choiceGone !== null) {
+		/* 人選的孔沒線了:**絕不自動改接**(就算只剩一條),列出來讓人重選。
+		 * 扣住的字是打給他選的那一孔的 ⇒ 丟掉(portHold 照舊扣著:選孔列開著時再打的字也不送) */
+		gone = choiceGone;
+		choiceGone = null;
+		heldBytes = [];
+		showChooser(null, false, gone);
+		return;
+	}
+	pick = pickSocket(lastPorts, recallSocket());
+	if (pick.auto !== null) { selectSocket(gen, pick.auto, 'auto'); return; }
+	showChooser(pick.pre, false);
+}
+
+/* 選孔列。switchMode = 連線中換孔(不倒數、多一顆 ✕);否則是連上後第一次選(裝置端 30 秒守門在計時)。
+ * gone(數字)= 人選的那一孔現在沒線(見 choiceGone):清單可能只剩一條也照樣列出來,開頭講明原因。
+ * ⚠️ 一律 createElement + textContent(標籤是使用者自填的字串,不碰 innerHTML) */
+function showChooser(pre, switchMode, gone) {
+	var i, b, t, cnt, lead = '', gn;
+
+	if (!elPortRow) return;
+	if (typeof gone === 'number') {
+		gn = socketName(gone);
+		lead = '你選的' + (/^[A-Za-z]/.test(gn) ? ' ' : '') + nameSp(gn) + '現在沒有線';
+	}
+	choosing = !switchMode;
+	switching = !!switchMode;
+	choosePre = switchMode ? null : pre;
+	elPortRow.textContent = '';
+	t = document.createElement('span');
+	t.className = 'plabel';
+	t.textContent = switchMode ? '換到哪一孔？（會重新連線）'
+		: lead ? lead + '，要改接哪一孔？'
+		: '這台有 ' + lastPorts.length + ' 條序列線，要接哪一孔？';
+	elPortRow.appendChild(t);
+	for (i = 0; i < lastPorts.length; i++) {
+		b = document.createElement('button');
+		b.setAttribute('type', 'button');
+		b.setAttribute('data-idx', String(lastPorts[i].idx));
+		b.textContent = socketText(lastPorts[i]) +
+			(switchMode && lastPorts[i].idx === portChosen ? '（目前）' : '') +
+			(!switchMode && lastPorts[i].idx === pre ? '（上次）' : '');
+		if (lastPorts[i].idx === (switchMode ? portChosen : pre)) b.classList.add('active');
+		b.addEventListener('click', (function(idx) {
+			return function() { pickSocketNow(idx); };
+		})(lastPorts[i].idx));
+		elPortRow.appendChild(b);
+	}
+	if (switchMode) {
+		b = document.createElement('button');
+		b.setAttribute('type', 'button');
+		b.setAttribute('aria-label', '不換孔');
+		b.textContent = '✕';
+		b.addEventListener('click', function() { hideChooser(); updatePortBtn(); term.focus(); });
+		elPortRow.appendChild(b);
+	} else {
+		cnt = document.createElement('span');
+		cnt.className = 'pcount';
+		elPortRow.appendChild(cnt);
+		chooseDeadline = Date.now() + CHOOSE_MS;
+		tickChooser(cnt);
+		if (lead) say(lead + ' —— 為避免對錯的設備下指令，不會自動改接別孔。請在終端上方點選要接的孔');
+		else say('這台 AirTTY 有 ' + lastPorts.length + ' 條序列線 —— 請在終端上方點選要接的孔' +
+			(pre !== null ? '（按 Enter 直接接上次的' + (/^[A-Za-z]/.test(socketName(pre)) ? ' ' : '') + socketName(pre) + '）' : ''));
+		setStatus('已連線:' + devLabel() + ' · 請選擇要接的孔', 'ok');
+		/* 說明印完了 ⇒ 補印暫存的裝置輸出;選孔列開著時 outHeld 為假,之後的輸出(30 秒守門那行)即時畫(見 outQ) */
+		outFlush();
+	}
+	elPortRow.classList.add('show');
+	updatePortBtn();
+	setTimeout(fitRows, 0);
+}
+
+/* 倒數(裝置端選孔守門 SELECT_GUARD_MS = 30 秒,從收到 LIST 起算;本頁從畫出選孔列起算,差幾十毫秒) */
+var CHOOSE_MS = 30000;
+
+function tickChooser(el) {
+	var left;
+
+	if (chooseTimer) { clearTimeout(chooseTimer); chooseTimer = 0; }
+	if (!choosing) return;
+	left = Math.max(0, Math.ceil((chooseDeadline - Date.now()) / 1000));
+	el.textContent = left > 0 ? '（' + left + ' 秒內沒選，AirTTY 會中斷藍牙連線）' : '（已逾時）';
+	if (left > 0) chooseTimer = setTimeout(function() { tickChooser(el); }, 1000);
+}
+
+function hideChooser() {
+	choosing = false;
+	switching = false;
+	choosePre = null;
+	if (chooseTimer) { clearTimeout(chooseTimer); chooseTimer = 0; }
+	if (!elPortRow) return;
+	if (elPortRow.classList.contains('show')) setTimeout(fitRows, 0);
+	elPortRow.classList.remove('show');
+	elPortRow.textContent = '';
+}
+
+/* 選孔列上點了一孔 / 按了 Enter */
+function pickSocketNow(idx) {
+	if (choosing) {
+		selectSocket(connGen, idx, 'pick');
+		return;
+	}
+	if (!switching) return;
+	hideChooser();
+	if (idx === portChosen) { updatePortBtn(); term.focus(); return; }
+	/* 裝置端一條藍牙連線只接一個孔,換孔 = 重新連線(密碼、寫入權都是逐連線的) */
+	if (!window.confirm('切換到 ' + socketText(portInfo(idx)) + ' 要重新連線：目前的 console 會中斷，' +
+		'連上後要重新輸入連線密碼。\n\n確定要切換嗎？')) {
+		updatePortBtn();
+		return;
+	}
+	autoRetried = false;
+	pendingPick = idx;
+	dropPlan = { status: '切換到 ' + socketName(idx) + '，重新連線中…', reconnect: true };
+	say('切換到 ' + socketText(portInfo(idx)) + '，重新連線中…');
+	disconnectNow();
+}
+
+function selectSocket(gen, idx, how) {
+	hideChooser();
+	portChosen = idx;
+	portHow = how;
+	ctlRequest(C_SELECT, [idx]).then(function(r) {
+		onSelectResult(gen, classifySelect(r, null, idx), idx);
+	}, function(e) {
+		onSelectResult(gen, classifySelect(null, e, idx), idx);
+	});
+}
+
+function onSelectResult(gen, c, chosen) {
+	var msg, txt;
+
+	if (gen !== connGen || !rxChar) return;   /* 已斷線或重連過:這輪作廢 */
+	if (backendDown) { portSettled(false); return; }   /* 0xA2 已經講過原因,不再疊一層訊息 */
+	if (c.kind === 'ok') {
+		txt = socketText(portInfo(chosen));
+		if (portHow !== 'auto') rememberSocket(chosen);   /* 自動接的不記(見 LS_PORT_PREFIX) */
+		setStatus('已連線:' + devLabel() + ' · ' + socketName(chosen), 'ok');
+		if (portHow === 'auto') say('已自動接上' + (/^[A-Za-z]/.test(txt) ? ' ' : '') + txt + '（這台目前只有這一條線）');
+		else say('已接上' + (/^[A-Za-z]/.test(txt) ? ' ' : '') + txt);
+		say('輸入連線密碼後即進 console（輸入時不會回顯是正常的）');
+		portSettled(true);
+		return;
+	}
+	portChosen = -1;
+	if (c.kind === 'badslot') {
+		/* §8.1:4 = 沒這個孔或沒線 —— 多半是剛被拔線。重新列出一次(上限 2 次,不打成迴圈) */
+		if (listRetries < 2) {
+			listRetries++;
+			if (portHow !== 'auto') {
+				/* 人選的孔沒線:重新列出後**不自動接**(見 choiceGone);扣住的字是給這一孔的 ⇒ 丟掉 */
+				choiceGone = chosen;
+				heldBytes = [];
+			}
+			say(nameSp(socketName(chosen)) + '剛剛沒有線了（可能剛被拔掉）—— 重新查一次…');
+			listPorts(gen);
+			return;
+		}
+		dropPlan = { status: '沒有接到 ' + socketName(chosen) };
+		say(nameSp(socketName(chosen)) + '沒有線 —— 請確認轉接線後按「↻ 重新連線」');
+		portSettled(false);
+		disconnectNow();
+		return;
+	}
+	if (c.kind === 'other') {
+		/* 裝置已先接上別的孔(LIST 晚於裝置的 1.5 秒保底才到)。**不可以就這樣用** ——
+		 * 畫面會是別台設備的 console。重連一次讓 LIST 先到;還是一樣就停下來交給人。 */
+		msg = '裝置已先接上 ' + socketName(c.slot) + '（' + (portHow === 'auto' ? '本頁要接的是 ' : '你選的是 ') + socketName(chosen) + '）';
+		if (!autoRetried) {
+			autoRetried = true;
+			/* 人選的才帶過重連直接接;自動接的(只有一條)重連後照清單重新判斷 —— 不把它當成「人選的」
+			 * (否則會被記住,或在它沒線時講成「你選的孔現在沒有線」) */
+			pendingPick = portHow === 'auto' ? null : chosen;
+			dropPlan = { status: '重新連線中…', reconnect: true };
+			say(msg + ' —— 為避免對錯的設備下指令，先中斷，自動重新連線一次…');
+		} else {
+			dropPlan = { status: '沒有接到 ' + socketName(chosen) };
+			say(msg + ' —— 為避免對錯的設備下指令，已中斷。請按「重新連線」再試一次');
+		}
+		portSettled(false);            /* 暫存的可能是別台設備的 `Password:`(裝置先接了別孔)—— 照樣補印、排在說明之後 */
+		disconnectNow();
+		return;
+	}
+	/* unsupported / writefail:LIST 都答了、選孔卻沒結果 —— 不能賭裝置接的是哪一孔,先斷開 */
+	if (!device || !device.gatt || !device.gatt.connected) { portSettled(false); return; }
+	dropPlan = { status: '沒有接到 ' + socketName(chosen) };
+	say('選孔命令沒有結果（可能是藍牙不穩）—— 為避免接到不是你選的孔，已中斷。可按「↻ 重新連線」再試');
+	portSettled(false);
+	disconnectNow();
+}
+
+/* 裝置說「選的孔不通、即將斷線」(0xA2)。同一條連線只講一次(裝置對晚訂閱者會補送) */
+function onBackendDown(d) {
+	if (!d || backendDown) return;
+	backendDown = d;
+	hideChooser();
+	setStatus(backendDownStatus(d), 'err');
+	say(backendDownText(d));
+	/* 本頁的說明先、裝置自己從 NUS 送的那行(`[AirTTY] hub 第 2 孔連不上…`,常比 0xA2 早到)補印在後 */
+	portSettled(false);
 }
 
 /* 找不到控制通道特徵值(舊韌體)→ 整組功能隱藏,不留半套死鈕 */
@@ -671,8 +1296,9 @@ var logPushed = 0;
  *  在程式註解裡寫它會讓稽核表多出一筆假命中,反而害讀的人要多查一次。) */
 var senseDecoder = new TextDecoder();
 
-/* t 參數只給開發期注入測試資料用(見 README 維護者節):正式路徑一律不帶,
- * 由 logAppend 自己取現在時間。UI 上沒有任何地方能傳它。 */
+/* t 參數:開發期注入測試資料用(見 README 維護者節);正式路徑只有一處會帶 ——
+ * 選孔期間暫存的裝置輸出補印時(outFlush)帶「收到的時間」,其餘一律不帶、由 logAppend 自己取現在時間。
+ * UI 上沒有任何地方能傳它。 */
 function logAppend(u8, t) {
 	if (!u8 || !u8.length) return;
 	logChunks.push({ u8: u8, t: t || Date.now() });
@@ -1454,7 +2080,13 @@ function gattConnectWithRetry(dev, tries) {
  * ∴ 鐵律:**主鏈只做 NUS**,做完立刻把畫面與焦點交還使用者(與 v6 逐行相同);
  * 控制通道**另外排隊、延後、逾時、全程 catch**,失敗只是少了功能,絕不影響終端。 */
 
-var CTL_DISCOVER_DELAY_MS = 1500;  /* 等密碼提示與前幾包序列輸出先流完再碰 GATT */
+/* ~~1500:等密碼提示與前幾包序列輸出先流完再碰 GATT~~ —— v17 改 0(2026-10-15)。
+ * 韌體 v1.9.0 起裝置端要等「列出 / 選孔」命令才接序列埠,**沒等到就在 1.5 秒後自己接預設孔**;
+ * 這裡若還延後 1500 ms 才開始找控制通道,LIST 永遠晚到、多條線的人每次都會被接到孔號最小的那一孔。
+ * 而延後的原始理由(讓密碼提示先流完)在新韌體上已不存在 —— 選孔之前根本沒有輸出。
+ * [實測 2026-10-15,bleak/macOS] NUS 訂閱 → CTL 訂閱約 60 ms、命令寫入再約 60 ms。
+ * ⚠️ 仍然**不進主鏈**(v7 鐵律不變):主鏈做完、畫面交還使用者之後才在背景開始。 */
+var CTL_DISCOVER_DELAY_MS = 0;
 var CTL_STEP_TIMEOUT_MS = 5000;    /* 單一 GATT 步驟的上限,掛住就放棄控制通道 */
 
 /* 連線世代:每次連線 +1。控制通道的探索是非同步的,若使用者在探索途中斷線
@@ -1481,6 +2113,71 @@ function withTimeout(promise, ms, label) {
 	});
 }
 
+function onCtlValue(ev) {
+	var dv = ev.target.value;
+
+	onCtlFrame(new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength)));
+}
+
+/* NUS 的裝置輸出(具名、wireUp 先拔再掛 —— 與 onCtlValue 同理:瀏覽器重連後若回同一個特徵值物件,
+ * 匿名函式會多掛一份 ⇒ 每包輸出畫兩次、側錄兩份) */
+function onNusValue(ev) {
+	var dv = ev.target.value;
+	/* 複製一份再交出去:xterm 的 write 是排隊非同步處理,
+	 * 而事件裡的 DataView 背後緩衝區由瀏覽器的 BLE 堆疊持有 */
+	var u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
+	rxBytes += u8.length;   /* 判「連上就被斷、什麼都沒收到」用(見斷線處理)—— 暫存的也算,收到就算 */
+	if (outHeld()) {        /* 選孔還沒有結果:先暫存,本頁說明印完再補印(見 outQ) */
+		outQ.push({ u8: u8, t: Date.now() });
+		outQBytes += u8.length;
+		if (outQBytes > OUT_HOLD_MAX) { outLive = true; outFlush(); }
+		return;
+	}
+	outFlush();             /* 保險:照理結束扣住時就補印完了;萬一有剩,先補舊的再畫新的,順序不亂 */
+	outEmit(u8);
+}
+
+/* 暫存期間 = 扣住鍵盤、而且選孔列沒開著(見 outQ) */
+function outHeld() {
+	return portHold && !choosing && !outLive;
+}
+
+/* 依到達順序補印暫存的裝置輸出 */
+function outFlush() {
+	var q = outQ, i;
+
+	if (!q.length) return;
+	outQ = [];
+	outQBytes = 0;
+	for (i = 0; i < q.length; i++) outEmit(q[i].u8, q[i].t);
+}
+
+/* 裝置輸出的**唯一出口**:畫面 + 側錄/偵測。即時與補印都走這裡 ⇒ 兩邊看到的位元組與順序一定相同。
+ * t = 收到的時間(補印時帶;即時的不帶,由 logAppend 取現在時間) */
+function outEmit(u8, t) {
+	/* ⚠️ 畫面優先,而且兩段各自 try —— 這是**唯一**把裝置輸出畫上去的地方,
+	 * 任何一行拋例外都會變成「連上了卻什麼都看不到」這種最難查的症狀
+	 * (2026-09-06 迴歸就長這樣)。側錄/偵測那一側再怎麼壞,
+	 * 都不可以連累終端顯示;壞了就明講一次,不要靜靜吞掉。 */
+	try {
+		term.write(u8);
+	} catch (e) {
+		if (!termWriteFailed) {
+			termWriteFailed = true;
+			say('⚠️ 終端顯示發生錯誤:' + (e && e.message) + '（請回報這行）');
+		}
+	}
+	try {
+		logAppend(u8, t);
+	} catch (e) {
+		if (!logAppendFailed) {
+			logAppendFailed = true;
+			say('⚠️ 側錄/偵測發生錯誤:' + (e && e.message) +
+				'（終端本身仍可用，請回報這行）');
+		}
+	}
+}
+
 /* 背景補上控制通道。**永遠不 throw 給呼叫端**,任何失敗都只是「這台沒有控制功能」。 */
 function setupControlChannel(svc, gen) {
 	if (!svc) return;
@@ -1490,18 +2187,21 @@ function setupControlChannel(svc, gen) {
 	]), CTL_STEP_TIMEOUT_MS, 'discover').then(function(cc) {
 		/* 世代不符 = 已經斷線或重連過,這輪結果作廢 */
 		if (gen !== connGen || !rxChar) return null;
-		if (!cc[0] || !cc[1]) return null;      /* 舊韌體:正常情況,不吵使用者 */
+		if (!cc[0] || !cc[1]) {                 /* 舊韌體(v1.8 以前):正常情況,只講「先連預設的孔」那一行 */
+			portUnsupported();
+			return null;
+		}
 		ctlRxChar = cc[0];
 		ctlTxChar = cc[1];
-		ctlTxChar.addEventListener('characteristicvaluechanged', function(ev) {
-			var dv = ev.target.value;
-			onCtlFrame(new Uint8Array(
-				dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength)));
-		});
+		/* 具名、先拔再掛:瀏覽器若在重連後回同一個特徵值物件,匿名函式會多掛一份 ⇒ 每則控制訊框處理兩次
+		 * (v18 的 LIST 是多則訊框累加,重複一則就判成格式錯;與 onGattDisconnected 同一個道理) */
+		ctlTxChar.removeEventListener('characteristicvaluechanged', onCtlValue);
+		ctlTxChar.addEventListener('characteristicvaluechanged', onCtlValue);
 		return withTimeout(ctlTxChar.startNotifications(),
 			CTL_STEP_TIMEOUT_MS, 'startNotifications').then(function() {
 			if (gen !== connGen) return null;
 			setCtlAvail(true);   /* 到這裡才顯示按鈕:能訂閱才代表真的可用 */
+			listPorts(gen);      /* v18:訂閱好立刻列出序列埠(要搶在裝置的 1.5 秒保底之前;收到 LIST 裝置就不再替我們挑) */
 			return null;
 		});
 	}).catch(function(e) {
@@ -1511,6 +2211,9 @@ function setupControlChannel(svc, gen) {
 		/* 只記一行,不用 toast —— 使用者此刻多半正在打密碼,不要蓋畫面 */
 		say('（這台裝置的序列埠控制功能無法使用：' +
 			(e && e.message ? e.message : '探索失敗') + '，終端本身不受影響）');
+		/* 控制通道「有但壞了」(逾時/訂閱失敗)≠ 舊韌體:列出命令根本沒送出去,
+		 * 同「命令沒寫進去」處理 —— 新韌體會在 1.5 秒保底自己接預設孔(多條線時在終端講接了哪一孔) */
+		onListResult(gen, { kind: 'writefail', ports: [] });
 	});
 }
 
@@ -1525,51 +2228,58 @@ function wireUp(server) {
 			svc.getCharacteristic(NUS_TX)
 		]);
 	}).then(function(chars) {
+		/* ⚠️ 從這裡起鍵盤就會往 rxChar 送 —— 靠 connectFlow 先設好的 portHold 扣住;
+		 * 這裡再設一次:connectFlow 之後若有晚到的斷線事件跑過 portSettled(false),扣住不能因此破功 */
+		portHold = true;
 		rxChar = chars[0];
 		txChar = chars[1];
-		txChar.addEventListener('characteristicvaluechanged', function(ev) {
-			var dv = ev.target.value;
-			/* 複製一份再交出去:xterm 的 write 是排隊非同步處理,
-			 * 而事件裡的 DataView 背後緩衝區由瀏覽器的 BLE 堆疊持有 */
-			var u8 = new Uint8Array(dv.buffer.slice(dv.byteOffset, dv.byteOffset + dv.byteLength));
-			/* ⚠️ 畫面優先,而且兩段各自 try —— 這是**唯一**把裝置輸出畫上去的地方,
-			 * 任何一行拋例外都會變成「連上了卻什麼都看不到」這種最難查的症狀
-			 * (2026-09-06 迴歸就長這樣)。側錄/偵測那一側再怎麼壞,
-			 * 都不可以連累終端顯示;壞了就明講一次,不要靜靜吞掉。 */
-			try {
-				term.write(u8);
-			} catch (e) {
-				if (!termWriteFailed) {
-					termWriteFailed = true;
-					say('⚠️ 終端顯示發生錯誤:' + (e && e.message) + '（請回報這行）');
-				}
-			}
-			try {
-				logAppend(u8);
-			} catch (e) {
-				if (!logAppendFailed) {
-					logAppendFailed = true;
-					say('⚠️ 側錄/偵測發生錯誤:' + (e && e.message) +
-						'（終端本身仍可用，請回報這行）');
-				}
-			}
-		});
+		txChar.removeEventListener('characteristicvaluechanged', onNusValue);
+		txChar.addEventListener('characteristicvaluechanged', onNusValue);
 		return txChar.startNotifications();
 	}).then(function() {
-		/* ── 主鏈到此為止,與 v6 逐行相同:立刻把畫面與焦點交還使用者 ── */
-		setStatus('已連線:' + (device.name || '(無名裝置,連線後名稱可能稍後出現)'), 'ok');
+		/* ── 主鏈到此為止:立刻把畫面與焦點交還使用者 ──
+		 * v17 起「輸入連線密碼後即進 console」改到選孔有結果時才講(那時才知道接的是哪一孔);
+		 * 這裡先講「正在問有哪些孔」。選孔有結果之前鍵盤先扣住(見 portHold)。 */
+		setStatus('已連線:' + devLabel(), 'ok');
 		setButtons('connected');
-		say('已連上。輸入連線密碼後即進 console(輸入時不會回顯是正常的)');
+		connectedAt = Date.now();
+		say('已連上藍牙，正在問這台 AirTTY 有哪些序列埠…');
 		term.focus();
 		fitRows();
-		/* 控制通道延後到背景做:①讓密碼提示與前幾包輸出先流完,不與 GATT 探索搶
-		 * ②就算它掛住 5 秒逾時,終端早就能用了。刻意**不 return**,不進主鏈。 */
+		/* 控制通道在背景做:就算它掛住 5 秒逾時,終端早就能用了。刻意**不 return**,不進主鏈。
+		 * (v17 起不再延後,理由見 CTL_DISCOVER_DELAY_MS) */
 		setTimeout(function() { setupControlChannel(svcRef, gen); }, CTL_DISCOVER_DELAY_MS);
 	});
 }
 
+/* 連線中換孔 / 選孔失敗後的自動重連,與使用者按「重新連線」走同一個入口。
+ * ⚠️ 延後 1 秒才連:裝置端以「藍牙位址」認 session,舊 session 還沒收乾淨時
+ *    新連線的訂閱會被當成重複而拒絕(blebridge「舊 session 尚未收斂,拒絕」)。 */
+var RECONNECT_DELAY_MS = 1000;
+
 function connectFlow(dev) {
 	wantDisconnect = false;
+	/* 逐連線狀態歸零(v17 起)。connGen 的 +1 是檔頭那段「連線世代」註解一直說有、
+	 * 程式卻從來沒做的事 —— 少了它,上一條連線晚到的選孔結果會被當成這一條的。
+	 * pendingPick(換孔 / 重連後直接接的孔)刻意**不**歸零:它就是要跨這一次重連。 */
+	connGen++;
+	portChosen = -1;
+	portHow = '';
+	lastPorts = [];
+	listRetries = 0;
+	listResent = false;
+	choiceGone = null;
+	/* 一開始就扣住鍵盤(見 portHold):選孔有結果(portSettled)、或舊韌體 / 控制通道不可用(portUnsupported 等)才放開。
+	 * 連線失敗時維持扣住 —— 沒接好的連線不送任何字;下次 connectFlow 會清掉 heldBytes */
+	outFlush();             /* 照理是空的(斷線時就補印完了);萬一有剩也是補印,不丟 */
+	outLive = false;
+	portHold = true;
+	heldBytes = [];
+	hideChooser();
+	backendDown = null;
+	dropPlan = null;
+	rxBytes = 0;
+	connectedAt = 0;
 	setButtons('connecting');
 	setStatus('連線中…');
 	return gattConnectWithRetry(dev, 3)
@@ -1583,34 +2293,84 @@ function connectFlow(dev) {
 		});
 }
 
+/* 「連上後什麼都沒收到就被斷」的時間窗:舊韌體(v1.8.11 以前)藍牙固定接的那個埠沒接線時,
+ * [實測 2026-10-15] 訂閱完約 2.5 秒就被裝置斷開、一個位元組都沒有。 */
+var EARLY_DROP_MS = 8000;
+
+/* 斷線處理(具名函式:同一個 BluetoothDevice 物件重選時只掛一次 —— 瀏覽器對同一台裝置
+ * 會回同一個物件,匿名函式每次 addEventListener 都會多掛一份,斷線訊息就印兩次,
+ * v17 的自動重連更會連兩次) */
+function onGattDisconnected() {
+	var plan = dropPlan, bd = backendDown, wasChoosing = choosing;
+	/* 「連上就斷、什麼都沒收到」怪舊韌體,只在本頁**沒拿到 v1.9.0 的清單、也沒選孔成功**時才成立
+	 * (2026-10-18 審查):新韌體接好不要密碼的孔之後本來就可能一個位元組都沒有,這時斷線是一般斷線。
+	 * lastPorts / portChosen 只在 connectFlow 歸零,這裡讀到的是這一條連線的 */
+	var early = !bd && !plan && !wantDisconnect && !wasChoosing && rxBytes === 0 &&
+		portChosen < 0 && !lastPorts.length &&
+		connectedAt > 0 && (Date.now() - connectedAt) < EARLY_DROP_MS;
+
+	rxChar = txChar = null;
+	/* 控制通道狀態一併歸零:斷線後那些按鈕必須立刻失去作用,
+	 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
+	 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
+	ctlRxChar = ctlTxChar = null;
+	setCtlAvail(false);
+	hideBaudRow();
+	ctlPending.forEach(function(r) { clearTimeout(r.timer); });
+	ctlPending = [];
+	if (listPending) { clearTimeout(listPending.timer); listPending = null; }
+	hideChooser();
+	dropPlan = null;
+	if (wantDisconnect) {
+		setStatus('已斷線');
+		setButtons('idle');
+	} else if (plan && plan.reconnect) {
+		setStatus(plan.status);
+		setButtons('connecting');
+		setTimeout(function() { if (device) connectFlow(device); }, RECONNECT_DELAY_MS);
+	} else if (bd) {
+		/* 裝置已經講過原因(0xA2)⇒ **不再猜**「裝置關機/超出距離」 */
+		setStatus(backendDownStatus(bd), 'err');
+		setButtons('dropped');
+		say('藍牙連線已由 AirTTY 結束。換好轉接線後按「↻ 重新連線」，再選要接的孔');
+	} else if (plan) {
+		setStatus(plan.status, 'err');
+		setButtons('dropped');
+	} else if (wasChoosing) {
+		/* 選孔列開著時斷線 = 裝置端 30 秒選孔守門到期(或人走開了)⇒ 講這個,不猜距離 */
+		setStatus('沒有選孔', 'err');
+		setButtons('dropped');
+		say('沒有在時限內選孔，AirTTY 已中斷藍牙連線。按「↻ 重新連線」再選一次');
+	} else if (early) {
+		setStatus('連線中斷', 'err');
+		setButtons('dropped');
+		/* 新韌體在「孔不通 / 沒線」時一定先送 0xA2 ⇒ 走到這裡的多半是舊韌體(藍牙固定接第一個埠位) */
+		say('連上後沒有收到任何輸出就被中斷。常見原因：AirTTY 藍牙接的那個序列埠沒有接線' +
+			'（韌體 v1.8.11 以前藍牙固定接第一個埠位，沒接線時會這樣直接斷線、不說原因），' +
+			'或藍牙連線人數已滿。可按「重新連線」');
+	} else {
+		setStatus('連線中斷', 'err');
+		setButtons('dropped');
+		say('連線中斷(裝置關機/超出距離/藍牙訊號中斷)。可按「重新連線」');
+	}
+	/* 放開扣住的鍵(丟掉)並補印暫存的裝置輸出 —— 放在斷線說明**之後**(見 outQ)。
+	 * senseLine 一定要在補印之後才清:補印的殘行若留著,會接到下一條連線的第一行 */
+	portSettled(false);
+	senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
+}
+
 btnConnect.onclick = function() {
 	if (!envCheck()) return;
+	autoRetried = false;
+	pendingPick = null;
 	/* service filter:我們的廣播帶 128-bit NUS UUID,直接命中;
 	 * 不用 acceptAllDevices —— chooser 雜訊少、也不多要權限 */
 	navigator.bluetooth.requestDevice({ filters: [{ services: [NUS_SVC] }] })
 		.then(function(dev) {
 			device = dev;
 			/* 意外斷線 → 顯示重連鈕(釘住同一 device,不重開 chooser) */
-			dev.addEventListener('gattserverdisconnected', function() {
-				rxChar = txChar = null;
-				/* 控制通道狀態一併歸零:斷線後那些按鈕必須立刻失去作用,
-				 * 否則使用者按下去只會拿到「送不出去」,還以為裝置壞了。
-				 * 就緒與否是**逐連線**的事實(密碼要重新登入),不可沿用。 */
-				ctlRxChar = ctlTxChar = null;
-				senseLine = '';   /* 警示計數的殘行是這條連線的,不能接到下一次連線的第一行 */
-				setCtlAvail(false);
-				hideBaudRow();
-				ctlPending.forEach(function(r) { clearTimeout(r.timer); });
-				ctlPending = [];
-				if (wantDisconnect) {
-					setStatus('已斷線');
-					setButtons('idle');
-				} else {
-					setStatus('連線中斷', 'err');
-					setButtons('dropped');
-					say('連線中斷(裝置關機/超出距離/藍牙訊號中斷)。可按「重新連線」');
-				}
-			});
+			dev.removeEventListener('gattserverdisconnected', onGattDisconnected);
+			dev.addEventListener('gattserverdisconnected', onGattDisconnected);
 			return connectFlow(dev);
 		})
 		.catch(function(e) {
@@ -1620,8 +2380,20 @@ btnConnect.onclick = function() {
 };
 
 btnReconnect.onclick = function() {
+	autoRetried = false;
+	pendingPick = null;
 	if (device) connectFlow(device);
 };
+
+/* 「🔌 換孔」:用這次連線 LIST 回來的清單開選孔列(換孔模式:不倒數、可關)。
+ * 清單可能已經舊了(線剛插拔)—— 選了之後重新連線,LIST 會重來一次;選的孔不在新清單裡就照常出選孔列。 */
+if (btnPort) {
+	btnPort.addEventListener('click', function() {
+		if (!rxChar || lastPorts.length < 2) return;
+		if (elPortRow && elPortRow.classList.contains('show')) { hideChooser(); updatePortBtn(); return; }
+		showChooser(null, true);
+	});
+}
 
 btnDisconnect.onclick = function() {
 	wantDisconnect = true;
