@@ -331,7 +331,7 @@ v1.8 這一輪的重點：**AI 助手連進 console（MCP）**、**藍牙端的 
 | [**A1 硬體規格**](hardware/a1/README.md) | 規格表、外觀與指示燈、支援的序列晶片、使用注意 |
 | [**M2 硬體規劃**](hardware/m2/README.md) | 規劃中機種的已知規格與待確認項目 |
 | [**AI 助手連線（MCP）**](https://www.npmjs.com/package/airtty-mcp) | 筆電端套件 `airtty-mcp`（npm，MIT）；裝置端用法見[手冊 §5.7](docs/manual-a1.md) |
-| [**官方發行頁**](https://github.com/AirTTY/airtty.github.io/releases/latest) | 升級檔下載與每一版的更新說明（目前最新 v1.9.3） |
+| [**官方發行頁**](https://github.com/AirTTY/airtty.github.io/releases/latest) | 升級檔下載與每一版的更新說明（目前最新 v1.9.4） |
 | [**GPL 合規聲明**](gpl/README.md) | 韌體授權說明、對應修改源碼、重建韌體的概要步驟 |
 
 ---
