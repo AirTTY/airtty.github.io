@@ -234,7 +234,7 @@ function pickSocket(ports, remembered) {
 	return { auto: null, pre: null };
 }
 
-/* 「這台」的鍵:裝置名稱的尾碼(AirTTY-A1-52C8 → 52C8,與廣播裡的識別碼同一個);
+/* 「這台」的鍵:裝置名稱的尾碼(AirTTY-A1-1a2b → 1A2B,與廣播裡的識別碼同一個);
  * 沒有名稱(很舊的韌體)退回瀏覽器給的 device.id(每個網站各一個,不跨站)。都沒有 ⇒ null = 不記 */
 function deviceKey(dev) {
 	var m;
@@ -293,7 +293,7 @@ var LS_KEYS = 'airtty.webterm.keysOpen';
  * 所以不受「線路參數不記憶」那條鐵律管。缺值 = 開(安全側預設)。 */
 var LS_BREAK_CONFIRM = 'airtty.webterm.breakConfirm';
 /* 「這台 AirTTY 上次選的孔」(v18;docs/plans/port-identity-redesign.md §8.2-6):每台一筆,
- * 鍵 = 前綴 + 裝置名稱尾碼(見 deviceKey,例 airtty.webterm.port.52C8),值 = 孔的 idx(0～18 的數字)。
+ * 鍵 = 前綴 + 裝置名稱尾碼(見 deviceKey,例 airtty.webterm.port.1A2B),值 = 孔的 idx(0～18 的數字)。
  * ⚠️ 為什麼它可以記、線路參數卻不行:線路參數(鮑率等)會**送到裝置、改動正在連的那台設備**;
  * 這裡只是「這台我上次接哪一孔」—— 和 LS_BREAK_CONFIRM 同類的操作偏好,不帶任何 console 內容,
  * 只在「多條線、要人選」時拿來預設勾(不會自己接)。尾碼本來就印在藍牙清單的裝置名稱上。
