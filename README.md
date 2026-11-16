@@ -101,9 +101,9 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
   鮑率、資料位元、校驗、停止位元、流量控制**全部在網頁上點選設定**，不必打任何指令。
 
 <p align="center">
-  <img src="docs/images/05-serial-device-card.png" alt="儀表板的序列裝置卡：顯示晶片型號與 USB ID，鮑率等參數用下拉選單設定">
+  <img src="docs/images/05-serial-device-card.png" alt="儀表板的 USB 面板與序列裝置卡：標題是孔名加標籤，右邊寫這孔接的線，鮑率等參數用下拉選單設定">
   <br>
-  <sub>插上 USB 序列轉接線，儀表板自動長出裝置卡 —— 晶片型號、USB ID 一目了然，參數全在網頁點選</sub>
+  <sub>插上 USB 序列轉接線，儀表板自動標出插在哪個孔、長出裝置卡 —— 晶片與序號一目了然，參數全在網頁點選</sub>
 </p>
 
 - **檔案伺服器** —— 把韌體檔上傳到 AirTTY，讓設備自己用 TFTP／HTTP／FTP／SCP 抓檔升級。
