@@ -352,7 +352,7 @@ grep -riE "fetch\(|XMLHttpRequest|WebSocket|sendBeacon|src=\"http" .
 | --- | --- | --- |
 | Local Storage | `airtty.webterm.fontSize`（例：`14`）、`airtty.webterm.keysOpen`（`0` 或 `1`） | 字級與快捷鍵列展開狀態。**不含任何 console 內容**，刪掉只會讓下次開頁回到預設值 |
 | Local Storage（**v8 新增的第三筆**） | `airtty.webterm.breakConfirm`（`0` 或 `1`） | 「送 Break 前先確認」的勾選狀態（`0` ＝已關閉確認）。**線路面板唯一被記住的選項** —— 它不會送到裝置、不影響任何設備，也看不出你連的是什麼機器。缺這筆＝**預設先確認**，所以刪掉只會讓確認視窗回來 |
-| Local Storage（**v18 新增的第四類，每台一筆**） | `airtty.webterm.port.<裝置名稱尾碼>`（例：`airtty.webterm.port.52C8` ＝ `2`） | 這台 AirTTY 上次選的孔（`0` ＝機身 USB、`1`～`4` ＝ hub 第 1～4 孔）。尾碼就是藍牙清單上裝置名稱 `AirTTY-A1-xxxx` 的最後一段；只在「有好幾條線、要你選」時拿來預設標起來，**不會自己接**。**不含任何 console 內容、也看不出那一孔接的是什麼設備**；鮑率等線路參數照舊一律不記憶。刪掉只會讓下次不預先標記 |
+| Local Storage（**v18 新增的第四類，每台一筆**） | `airtty.webterm.port.<裝置名稱尾碼>`（例：`airtty.webterm.port.1a2b` ＝ `2`） | 這台 AirTTY 上次選的孔（`0` ＝機身 USB、`1`～`4` ＝ hub 第 1～4 孔）。尾碼就是藍牙清單上裝置名稱 `AirTTY-A1-xxxx` 的最後一段；只在「有好幾條線、要你選」時拿來預設標起來，**不會自己接**。**不含任何 console 內容、也看不出那一孔接的是什麼設備**；鮑率等線路參數照舊一律不記憶。刪掉只會讓下次不預先標記 |
 | Session Storage | 空 | 本站不使用 |
 | IndexedDB | 空 | 本站不使用 |
 | Cookies | 空 | 本站不使用，也沒有後端可以發 |
