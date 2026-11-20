@@ -34,6 +34,15 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
   <a href="https://airtty.github.io/docs/media/airtty-a1-demo.mp4#gh-fallback"><img src="docs/images/demo-poster.jpg" width="640" alt="AirTTY A1 示範影片：值班現場，從失聯到交班（點擊播放）"></a>
 </p>
 
+**▶ 示範影片二：骨幹斷了，console 接得上嗎**（2 分 11 秒，字幕＋中文旁白；動畫為示意，介面畫面取自實機；另有[直式短版 54 秒](https://airtty.github.io/docs/media/airtty-demo-outage-vertical.mp4)）
+
+<p align="center">
+  <video controls preload="none" playsinline poster="docs/images/demo-outage-poster.jpg" width="720" height="405" aria-label="AirTTY 示範影片二：骨幹斷了，console 接得上嗎（2 分 11 秒，字幕＋中文旁白）">
+    <source src="docs/media/airtty-demo-outage.mp4" type="video/mp4">
+  </video>
+  <a href="https://airtty.github.io/docs/media/airtty-demo-outage.mp4#gh-fallback"><img src="docs/images/demo-outage-poster.jpg" width="640" alt="AirTTY 示範影片二：骨幹斷了，console 接得上嗎（點擊播放）"></a>
+</p>
+
 ---
 
 ## 這解決什麼問題
@@ -44,7 +53,7 @@ AirTTY 上、另一端接到交換器／路由器／防火牆／伺服器的 con
 - **不必為了一條 console 線在機櫃前後穿梭**。線留在設備上，你帶著筆電走。
 - **設備網路掛掉時（帶外管理／OOB），console 是最後一條路** —— AirTTY 讓這條路變成無線的。
 - **現場沒有插座也能用**（A1 內建電池；M2 接行動電源）。
-- **一台可同時服務多人**：同一個 console 畫面可以多人同時看、同時打字，適合「一人操作、其他人監看」
+- **一台可同時服務多人**：同一個 console 畫面可以多人同時看，同時只有一個人能打字（其他人唯讀，可一鍵接管），適合「一人操作、其他人監看」
   的教學或值班交接情境。
 
 ---
