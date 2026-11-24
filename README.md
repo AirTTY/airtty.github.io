@@ -299,10 +299,10 @@ AirTTY 的定位因此很直接：**用開放硬體與開源軟體，
 
 ## 軟體更新
 
-功能更新以**單一升級檔**發布（`airtty-update-vX.Y.Z.run`），**不會動到你的設定** ——
+功能更新以**單一升級檔**發布（`airtty-a1-vX.Y.Z-update.run`；v1.9.4 以前叫 `airtty-update-vX.Y.Z.run`），**不會動到你的設定** ——
 序列埠綁定、連線密碼、WiFi 設定全部保留，升級檔內建 sha256 完整性驗證。
 
-- **目前最新版：v1.9.3**（2026-11-15）。
+- **目前最新版：v1.9.5**（2026-11-24）。
   → [**官方發行頁（含每一版的更新說明）**](https://github.com/AirTTY/airtty.github.io/releases/latest)
 - **線上更新**（最簡單）：儀表板 →「軟體更新」→ **🔍 檢查更新**，
   只要**你的電腦**能上網就查得到新版與更新說明；裝置若已連上游 WiFi，按 **⬆️ 線上更新** 即可自行完成。
@@ -340,7 +340,7 @@ v1.8 這一輪的重點：**AI 助手連進 console（MCP）**、**藍牙端的 
 | [**A1 硬體規格**](hardware/a1/README.md) | 規格表、外觀與指示燈、支援的序列晶片、使用注意 |
 | [**M2 硬體規劃**](hardware/m2/README.md) | 規劃中機種的已知規格與待確認項目 |
 | [**AI 助手連線（MCP）**](https://www.npmjs.com/package/airtty-mcp) | 筆電端套件 `airtty-mcp`（npm，MIT）；裝置端用法見[手冊 §5.7](docs/manual-a1.md) |
-| [**官方發行頁**](https://github.com/AirTTY/airtty.github.io/releases/latest) | 升級檔下載與每一版的更新說明（目前最新 v1.9.4） |
+| [**官方發行頁**](https://github.com/AirTTY/airtty.github.io/releases/latest) | 升級檔下載與每一版的更新說明（目前最新 v1.9.5） |
 | [**GPL 合規聲明**](gpl/README.md) | 韌體授權說明、對應修改源碼、重建韌體的概要步驟 |
 
 ---
